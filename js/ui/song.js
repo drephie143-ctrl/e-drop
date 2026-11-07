@@ -1,30 +1,46 @@
 // Song tab: the arrangement timeline. Sections across the top, a row per track showing
 // which pattern plays in each section, and automation lanes under it.
+// On a computer (app.desk) the timeline fits the whole song to the panel width by default,
+// rows fill the panel height, cells show a picture of their pattern, a track's name selects it
+// for the editor and Sound panels, and the selected section's card sits beside the timeline.
 import { h, card, openSheet, closeSheet, seg, toast } from './dom.js';
 import { SECTION_TYPES, addSection, newPattern, buildSweep, putRange, uid } from '../music/project.js';
 import { LANE_PARAMS, laneValue, sectionStarts, songBars } from '../audio/engine.js';
+import { VOICES } from '../audio/drums.js';
 
-const LABEL = 64;
+const PHONE_LABEL = 64;
+const MAX_BPX = { phone: 40, desk: 240 };
 
-export function renderSong(app, root) {
+export function renderSong(app, root, again = false) {
   const p = app.project;
   const ui = app.ui;
-  const bpx = ui.barPx;
+  const desk = !!app.desk;
+  const LABEL = desk ? (app.ultra ? 172 : 152) : PHONE_LABEL;
   const total = songBars(p);
   const starts = sectionStarts(p);
   ui.section = Math.min(ui.section, p.sections.length - 1);
-  const W = LABEL + total * bpx + 24;
+  // Fit: the whole song across the visible width (measured after the first layout, below)
+  const fit = desk && ui.tlFit !== false;
+  if (fit) ui.barPx = Math.max(4, ((ui.tlAvail || root.clientWidth * 0.72) - LABEL - 8) / Math.max(1, total));
+  const bpx = ui.barPx;
+  ui.tlLabel = LABEL;
+  const W = LABEL + total * bpx + (desk ? 8 : 24);
 
   const row = (cls, label, kids, attrs = {}) => h('div', { class: 'tl-row ' + cls, style: { width: W + 'px' }, ...attrs },
     h('div', { class: 'tl-label' }, label), ...kids);
 
-  // ruler: tap to move the playhead
+  // ruler: tap to move the playhead (positions are divided by the display-size zoom)
   const ticks = [];
-  for (let b = 0; b < total; b += bpx < 9 ? 8 : 4) ticks.push(h('span', { style: { left: LABEL + b * bpx + 'px' } }, String(b + 1)));
+  const every = desk ? (bpx >= 30 ? 1 : bpx >= 15 ? 2 : bpx >= 8 ? 4 : 8) : bpx < 9 ? 8 : 4;
+  for (let b = 0; b < total; b += every) ticks.push(h('span', { class: desk && b % 4 === 0 ? 'q' : null, style: { left: LABEL + b * bpx + 'px' } }, String(b + 1)));
+  const pos = app.engine.position();
+  if (desk) ticks.push(h('div', { class: 'tl-ph-cap', style: { left: LABEL + pos * bpx + 'px' } }));
   const ruler = row('tl-ruler', 'bar', ticks, {
     onclick: (e) => {
-      const r = e.currentTarget.getBoundingClientRect();
-      const bar = Math.max(0, (e.clientX - r.left - LABEL) / bpx);
+      const el = e.currentTarget;
+      const r = el.getBoundingClientRect();
+      const z = r.width / el.offsetWidth || 1;
+      const bar = Math.max(0, ((e.clientX - r.left) / z - LABEL) / bpx);
       app.engine.seek(Math.round(bar));
     },
   });
@@ -33,42 +49,152 @@ export function renderSong(app, root) {
     class: 'tl-sec' + (i === ui.section ? ' sel' : ''),
     style: { left: LABEL + starts[i] * bpx + 'px', width: s.bars * bpx - 2 + 'px', background: SECTION_TYPES[s.type].color },
     onclick: () => { ui.section = i; if (app.engine.loop) app.setLoop(true); app.render(); },
-  }, h('b', {}, s.name), h('small', {}, `${s.bars}`))));
+  }, h('b', {}, s.name), h('small', {}, desk && s.bars * bpx > 90 ? `${s.bars} bars` : `${s.bars}`))));
 
-  const trackRows = p.tracks.map((t) => row('tl-track', h('span', { class: 'dot', style: { background: t.color } }, ''), p.sections.map((s, i) => {
-    const pid = s.cells[t.id];
-    const pat = pid && t.patterns.find((x) => x.id === pid);
-    const reps = pat ? Math.ceil(s.bars / pat.bars) : 0;
-    return h('button', {
-      class: 'tl-cell' + (pat ? ' on' : ''),
-      style: { left: LABEL + starts[i] * bpx + 'px', width: s.bars * bpx - 2 + 'px', '--c': t.color },
-      onclick: () => cellSheet(app, t, i),
-      'aria-label': `${t.name} in ${s.name}`,
-    }, pat ? h('span', {}, pat.name + (reps > 1 ? ` ×${reps}` : '')) : '');
-  }), { 'data-track': t.id }));
-  trackRows.forEach((r, k) => { r.querySelector('.tl-label').append(h('span', { class: 'tl-tname' }, p.tracks[k].name)); });
+  const anySolo = p.tracks.some((t) => t.mix.solo);
+  const trackRows = p.tracks.map((t) => {
+    const cells = p.sections.map((s, i) => {
+      const pid = s.cells[t.id];
+      const pat = pid && t.patterns.find((x) => x.id === pid);
+      const reps = pat ? Math.ceil(s.bars / pat.bars) : 0;
+      const wpx = s.bars * bpx - 2;
+      return h('button', {
+        class: 'tl-cell' + (pat ? ' on' : ''),
+        style: { left: LABEL + starts[i] * bpx + 'px', width: wpx + 'px', '--c': t.color },
+        onclick: () => cellSheet(app, t, i),
+        'aria-label': `${t.name} in ${s.name}`,
+      }, pat && desk ? miniPattern(t, pat, s.bars, wpx) : null, pat ? h('span', {}, pat.name + (reps > 1 ? ` ×${reps}` : '')) : '');
+    });
+    if (!desk) return row('tl-track', h('span', { class: 'dot', style: { background: t.color } }, ''), cells, { 'data-track': t.id });
+    // a computer: the name selects the track; M and S mute and solo it
+    const x = t.mix;
+    const toggle = (k) => { x[k] = !x[k]; app.mixChanged(); app.render(); };
+    const label = h('div', { class: 'tl-label' },
+      h('button', { class: 'tl-pick', title: `Edit ${t.name}`, onclick: () => { ui.track = t.id; app.render(); } },
+        h('span', { class: 'dot', style: { background: t.color } }), h('span', { class: 'tl-tname' }, t.name)),
+      h('button', { class: 'tl-ms m' + (x.mute ? ' on' : ''), title: `Mute ${t.name}`, 'aria-pressed': String(!!x.mute), onclick: () => toggle('mute') }, 'M'),
+      h('button', { class: 'tl-ms s' + (x.solo ? ' on' : ''), title: `Solo ${t.name}`, 'aria-pressed': String(!!x.solo), onclick: () => toggle('solo') }, 'S'));
+    return h('div', {
+      class: 'tl-row tl-track' + (t.id === ui.track ? ' sel' : '') + (x.mute || (anySolo && !x.solo) ? ' dim' : ''),
+      style: { width: W + 'px', '--c': t.color }, 'data-track': t.id,
+    }, label, ...cells);
+  });
+  if (!desk) trackRows.forEach((r, k) => { r.querySelector('.tl-label').append(h('span', { class: 'tl-tname' }, p.tracks[k].name)); });
 
-  const laneRows = p.automation.map((lane) => laneRow(app, lane, W, bpx, total));
+  const laneRows = p.automation.map((lane) => laneRow(app, lane, W, bpx, total, LABEL, desk ? 52 : 54));
 
-  const head = h('div', { class: 'tl-ph', style: { left: LABEL + 'px' } });
-  const inner = h('div', { class: 'tl-inner', style: { width: W + 'px' } }, ruler, secRow, ...trackRows, ...laneRows, head);
+  const head = h('div', { class: 'tl-ph', style: { left: LABEL + pos * bpx + 'px' } });
+  const inner = h('div', { class: 'tl-inner', style: desk ? { width: W + 'px', '--bpx': String(bpx), '--lbl': LABEL + 'px' } : { width: W + 'px' } },
+    ruler, secRow, ...trackRows, ...laneRows, head);
   const tl = h('div', { class: 'tl', id: 'timeline' }, inner);
-  requestAnimationFrame(() => { tl.scrollLeft = ui.tlScroll || 0; });
-  tl.addEventListener('scroll', () => { ui.tlScroll = tl.scrollLeft; }, { passive: true });
+  tl.addEventListener('scroll', () => { ui.tlScroll = tl.scrollLeft; ui.tlScrollY = tl.scrollTop; }, { passive: true });
 
   const s = p.sections[ui.section];
   const secCard = s ? sectionCard(app, s, ui.section, starts[ui.section]) : h('div', { class: 'empty' }, 'No sections yet. Add an intro to start.');
 
-  root.replaceChildren(
-    h('div', { class: 'row tl-tools' },
-      h('span', { class: 'hint grow' }, `${total} bars · ${fmtLen(total * 240 / p.bpm)}`),
-      h('button', { class: 'chip', onclick: () => { ui.barPx = Math.max(4, ui.barPx / 1.4); app.render(); }, 'aria-label': 'Zoom out' }, '−'),
-      h('button', { class: 'chip', onclick: () => { ui.barPx = Math.min(40, ui.barPx * 1.4); app.render(); }, 'aria-label': 'Zoom in' }, '+'),
-      h('button', { class: 'chip', onclick: () => addSectionSheet(app) }, '+ Section'),
-      h('button', { class: 'chip', onclick: () => laneSheet(app) }, '+ Lane')),
-    tl,
-    secCard,
-    h('p', { class: 'hint', style: { marginTop: '10px' } }, 'Tap a cell to pick the pattern a track plays in that section. On a lane, tap to add a point, drag to move it, tap a point to remove it.'));
+  // zoom keeps the bar under the pointer (or the middle of the view) where it is
+  const zoomAt = (f, ax) => {
+    const bar = (tl.scrollLeft + ax - LABEL) / bpx;
+    ui.tlFit = false;
+    ui.barPx = Math.max(4, Math.min(MAX_BPX.desk, bpx * f));
+    ui.tlScroll = Math.max(0, bar * ui.barPx + LABEL - ax);
+    renderSong(app, root);
+  };
+  const zoomBtn = (f) => {
+    if (desk) { zoomAt(f, tl.clientWidth / 2); return; }
+    ui.barPx = f > 1 ? Math.min(MAX_BPX.phone, ui.barPx * f) : Math.max(4, ui.barPx * f);
+    app.render();
+  };
+  const tools = h('div', { class: 'row tl-tools' },
+    h('span', { class: 'hint grow' }, `${total} bars · ${fmtLen(total * 240 / p.bpm)}`),
+    h('button', { class: 'chip', onclick: () => zoomBtn(1 / 1.4), 'aria-label': 'Zoom out', title: desk ? 'Zoom out (Ctrl + wheel)' : null }, '−'),
+    h('button', { class: 'chip', onclick: () => zoomBtn(1.4), 'aria-label': 'Zoom in', title: desk ? 'Zoom in (Ctrl + wheel)' : null }, '+'),
+    desk ? h('button', { class: 'chip' + (fit ? ' on' : ''), title: 'Fit the whole song to the width (F)', onclick: () => { ui.tlFit = true; renderSong(app, root); } }, 'Fit') : null,
+    h('button', { class: 'chip', onclick: () => addSectionSheet(app) }, '+ Section'),
+    h('button', { class: 'chip', onclick: () => laneSheet(app) }, '+ Lane'));
+
+  if (!desk) {
+    requestAnimationFrame(() => { tl.scrollLeft = ui.tlScroll || 0; });
+    root.replaceChildren(
+      tools,
+      tl,
+      secCard,
+      h('p', { class: 'hint', style: { marginTop: '10px' } }, 'Tap a cell to pick the pattern a track plays in that section. On a lane, tap to add a point, drag to move it, tap a point to remove it.'));
+    return;
+  }
+
+  // Ctrl + wheel (or a trackpad pinch) zooms the timeline
+  let wheelF = 1;
+  let wheelX = 0;
+  let wheelRaf = 0;
+  tl.addEventListener('wheel', (e) => {
+    if (!e.ctrlKey && !e.metaKey) return;
+    e.preventDefault();
+    const r = tl.getBoundingClientRect();
+    wheelX = (e.clientX - r.left) / (r.width / tl.offsetWidth || 1);
+    wheelF *= Math.exp(-Math.max(-60, Math.min(60, e.deltaY)) * 0.004);
+    if (!wheelRaf) wheelRaf = requestAnimationFrame(() => zoomAt(wheelF, wheelX));
+  }, { passive: false });
+
+  const slot = root.parentElement && root.parentElement.querySelector('.panel-tools');
+  if (slot) slot.replaceChildren(tools);
+  root.replaceChildren(h('div', { class: 'song-body' }, tl, h('div', { class: 'song-side' }, slot ? null : tools, secCard,
+    h('p', { class: 'hint' }, 'Click a cell to choose its pattern, a track name to edit that track. Lanes: click to add a point, drag to move it, click a point to remove it.'))));
+  tl.scrollLeft = fit ? 0 : ui.tlScroll || 0;
+  tl.scrollTop = ui.tlScrollY || 0;
+  // the first fit guessed the width: measure it and lay out again once
+  if (fit && !again) {
+    const aw = tl.clientWidth;
+    if (aw && Math.abs(aw - (ui.tlAvail || 0)) > 0.5) { ui.tlAvail = aw; renderSong(app, root, true); }
+  }
+}
+
+// A small picture of the pattern inside its cell, repeated over the section like a clip.
+const DRUM_Y = Object.fromEntries(VOICES.map((v, i) => [v.id, i]));
+function miniPattern(t, pat, bars, wpx) {
+  if (wpx < 36) return null;
+  const total = bars * 16;
+  const steps = pat.bars * 16;
+  const reps = Math.ceil(total / steps);
+  let d = '';
+  const rect = (x, y, w, hh) => {
+    if (x >= total) return;
+    const ww = Math.max(0.35, Math.min(w, total - x)).toFixed(2);
+    d += `M${x.toFixed(2)} ${y.toFixed(1)}h${ww}v${hh.toFixed(1)}h-${ww}z`;
+  };
+  if (t.role === 'drums') {
+    const rowH = 100 / VOICES.length;
+    for (let r = 0; r < reps; r++) for (const x of pat.hits) rect(r * steps + x.s, (VOICES.length - 1 - (DRUM_Y[x.v] ?? 0)) * rowH + 1, 0.55, rowH - 2);
+  } else if (t.role === 'fx') {
+    for (let r = 0; r < reps; r++) {
+      for (const e of pat.fx) {
+        const x0 = r * steps + e.s;
+        if (x0 >= total) continue;
+        const x1 = Math.min(total, x0 + e.len);
+        const up = e.type === 'riser' || e.type === 'noiseup' || e.type === 'reverse';
+        d += up ? `M${x0} 96L${x1} 8L${x1} 96Z` : `M${x0} 8L${x1} 96L${x0} 96Z`;
+      }
+    }
+  } else {
+    if (!pat.notes.length) return null;
+    let lo = Infinity;
+    let hi = -Infinity;
+    for (const n of pat.notes) { lo = Math.min(lo, n.pitch); hi = Math.max(hi, n.pitch); }
+    const span = Math.max(12, hi - lo + 1);
+    const nh = Math.max(5, Math.min(14, 100 / span));
+    const mid = (lo + hi) / 2;
+    for (let r = 0; r < reps; r++) {
+      for (const n of pat.notes) rect(r * steps + n.start, 50 - ((n.pitch - mid) / span) * (100 - nh) - nh / 2, Math.max(0.4, n.len - 0.15), nh);
+    }
+  }
+  if (!d) return null;
+  const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+  svg.setAttribute('class', 'tl-mini');
+  svg.setAttribute('viewBox', `0 0 ${total} 100`);
+  svg.setAttribute('preserveAspectRatio', 'none');
+  svg.setAttribute('aria-hidden', 'true');
+  svg.innerHTML = `<path d="${d}" fill="rgba(0,0,0,.62)"/>`;
+  return svg;
 }
 
 const fmtLen = (sec) => `${Math.floor(sec / 60)}:${String(Math.round(sec % 60)).padStart(2, '0')}`;
@@ -158,9 +284,8 @@ function laneLabel(app, lane) {
   return { who: t ? t.name : 'Master', what: P ? P.name : lane.param, color: t ? t.color : '#e9eef4' };
 }
 
-function laneRow(app, lane, W, bpx, total) {
+function laneRow(app, lane, W, bpx, total, LABEL, H) {
   const L = laneLabel(app, lane);
-  const H = 54;
   const pad = 5;
   const P = LANE_PARAMS[lane.param];
   const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
@@ -186,8 +311,9 @@ function laneRow(app, lane, W, bpx, total) {
   let drag = null;
   const at = (e) => {
     const r = svg.getBoundingClientRect();
-    const x = e.clientX - r.left;
-    const y = e.clientY - r.top;
+    const z = r.width / (W - LABEL) || 1; // display-size zoom
+    const x = (e.clientX - r.left) / z;
+    const y = (e.clientY - r.top) / z;
     return { x, y, b: Math.max(0, Math.min(total, x / bpx)), v: Math.max(0, Math.min(1, 1 - (y - pad) / (H - 2 * pad))) };
   };
   svg.addEventListener('pointerdown', (e) => {

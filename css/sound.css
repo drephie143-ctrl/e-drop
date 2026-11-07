@@ -1,0 +1,68 @@
+/* Sound and Drums: the visual editors (js/ui/graphs-sound.js) and the wide drum grid */
+
+/* graph heights: readable on the phone, bigger on a desktop or a 47" ultrawide. vh doesn't follow
+   the root's CSS zoom (desktop Display size); --vh divides it back */
+#tab-sound, #tab-drums, #tab-notes { --vh: calc(1vh / var(--zoom, 1)); --sg-h: clamp(118px, calc(16 * var(--vh)), 156px); --sg-hs: clamp(96px, calc(12.5 * var(--vh)), 124px); }
+/* desktop panels are about half the window tall, so graphs take ~15% of the height, capped */
+body.desk #tab-sound, body.desk #tab-drums, body.desk #tab-notes { --sg-h: clamp(132px, calc(15 * var(--vh)), 200px); --sg-hs: clamp(104px, calc(11 * var(--vh)), 150px); }
+body.ultra #tab-sound, body.ultra #tab-drums, body.ultra #tab-notes { --sg-h: clamp(140px, calc(15 * var(--vh)), 210px); --sg-hs: clamp(108px, calc(11.5 * var(--vh)), 160px); }
+
+/* a card's graphs and its controls: stacked on a phone, side by side when the card is wide */
+.sg { container-type: inline-size; min-width: 0; }
+.sg-in { display: flex; flex-direction: column; gap: 10px; }
+.sg-g, .sg-c { display: flex; flex-direction: column; gap: 10px; min-width: 0; }
+@container (min-width: 760px) {
+  .sg-in { flex-direction: row; align-items: flex-start; gap: 20px; }
+  .sg-g { flex: 1.1 1 0; }
+  .sg-c { flex: 1 1 0; }
+  /* narrower label and value columns, so the slider tracks keep a usable length */
+  .sg-c .slider { grid-template-columns: 86px 28px minmax(0, 1fr) 28px 72px; gap: 5px; }
+}
+/* the kit's eight level sliders go two across once there's room */
+.kit-levels { display: flex; flex-direction: column; gap: 10px; }
+@container (min-width: 1100px) { .kit-levels { display: grid; grid-template-columns: 1fr 1fr; column-gap: 18px; } }
+
+/* one graph and its caption: live values on the left, the gesture on the right */
+.sg-box { display: flex; flex-direction: column; gap: 5px; min-width: 0; }
+.sg-graph { touch-action: none; }
+.sg-graph .graph-canvas { cursor: crosshair; }
+.sg-cap { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; font-size: 11px; line-height: 1.3; color: var(--muted); min-height: 14px; }
+.sg-read { color: var(--text); font-variant-numeric: tabular-nums; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sg-hint { flex: none; white-space: nowrap; opacity: .85; }
+.sg-gate .gate, .sg-box .gate { margin-top: 1px; }
+
+/* pitch envelope across the top, drive and width side by side under it; three across when wide */
+.sg-trio { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 10px; }
+.sg-trio > :first-child { grid-column: 1 / -1; }
+@container (min-width: 1000px) {
+  .sg-trio { grid-template-columns: 1.2fr 1fr 1fr; }
+  .sg-trio > :first-child { grid-column: auto; }
+}
+
+/* play buttons + Audition chip */
+.sg-play { flex-wrap: nowrap; }
+.sg-play .btn { flex: 1 1 0; }
+.sg-audition { flex: none; padding: 7px 10px; }
+.sg-audition svg { width: 15px; height: 15px; flex: none; }
+.sg-tip { font-size: 11.5px; }
+#tab-drums .sg-play { flex-wrap: wrap; gap: 6px 10px; }
+#tab-drums .sg-play .hint { font-size: 11.5px; }
+
+/* the Kit card: kick and levels stacked, or side by side on a wide Drums panel */
+.kit-grid { display: flex; flex-direction: column; gap: 16px; }
+@media (min-width: 1200px) {
+  body.desk .kit-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 520px), 1fr)); gap: 18px 26px; align-items: start; }
+}
+
+/* drum grid: several bars side by side when the panel is wide (renderDrums sets the span) */
+.dcells.multi { display: flex; gap: 10px; }
+.dbar { flex: 1 1 0; min-width: 0; display: grid; grid-template-columns: repeat(16, minmax(0, 1fr)); gap: 2px; }
+.druler { margin-bottom: -2px; }
+.druler .dname { padding: 0; }
+.dbar-lbl { flex: 1 1 0; min-width: 0; font-size: 11px; font-weight: 700; color: var(--muted); padding: 0 2px; border-left: 2px solid var(--line); line-height: 16px; }
+.dgrid.wide .step.cur { box-shadow: 0 0 0 2px #fff inset; }
+
+body.desk #tab-drums .dname { width: 72px; font-size: 12px; }
+body.desk #tab-drums .step { height: clamp(34px, calc(4.2 * var(--vh)), 46px); }
+body.desk #tab-drums .dgrid { gap: 5px; }
+body.desk #tab-drums .dpages { max-width: 100%; }

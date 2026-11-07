@@ -43,7 +43,7 @@ header.top { display: flex; align-items: center; gap: 8px; padding: calc(env(saf
 .logo-tile { width: 36px; height: 36px; flex: none; background: #fff; border-radius: 9px; padding: 5px; display: block; }
 .titles { flex: 1; min-width: 0; }
 .app-name { font-weight: 800; font-size: 17px; letter-spacing: -.01em; white-space: nowrap; }
-.render-badge { font-size: 10.5px; margin-left: 6px; font-weight: 700; color: var(--glow); background: var(--accent-soft); padding: 2px 6px; border-radius: 6px; animation: blink 1.2s infinite; }
+.render-badge { white-space: nowrap; font-size: 10.5px; margin-left: 6px; font-weight: 700; color: var(--glow); background: var(--accent-soft); padding: 2px 6px; border-radius: 6px; animation: blink 1.2s infinite; }
 @keyframes blink { 50% { opacity: .5; } }
 .proj-name { color: var(--muted); font-size: 13px; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; display: block; text-align: left; }
 .pill { background: var(--panel2); border: 1px solid var(--line); border-radius: 999px; padding: 6px 10px; font-weight: 700; font-size: 13px; font-variant-numeric: tabular-nums; white-space: nowrap; }
@@ -59,6 +59,7 @@ header.top { display: flex; align-items: center; gap: 8px; padding: calc(env(saf
 .clock > div:first-child { font-size: 22px; font-weight: 700; letter-spacing: -.02em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .clock-sec { font-size: 14px; font-weight: 700; color: var(--accent); margin-left: 4px; }
 #clockTime { font-size: 12px; color: var(--muted); }
+.clock > div:last-child { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 
 /* main + tabs */
 main { flex: 1; overflow-y: auto; -webkit-overflow-scrolling: touch; padding: 12px 14px 24px; min-height: 0; }
@@ -105,7 +106,11 @@ select, input[type="number"], input[type="text"] {
 }
 select { background-image: linear-gradient(45deg, transparent 50%, var(--muted) 50%), linear-gradient(135deg, var(--muted) 50%, transparent 50%);
   background-position: calc(100% - 16px) 55%, calc(100% - 11px) 55%; background-size: 5px 5px; background-repeat: no-repeat; padding-right: 28px; }
-.slider { display: grid; grid-template-columns: 82px 1fr 70px; align-items: center; gap: 8px; font-size: 13px; color: var(--muted); }
+.slider { display: grid; grid-template-columns: 72px 28px minmax(0, 1fr) 28px 60px; align-items: center; gap: 4px; font-size: 13px; color: var(--muted); }
+.slider .lbl { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.nudge { width: 28px; height: 28px; border-radius: 8px; background: var(--panel2); border: 1px solid var(--line); color: var(--muted); display: grid; place-items: center; padding: 8px; touch-action: none; }
+.nudge:active { background: var(--accent-soft); border-color: var(--accent); color: var(--accent); }
+@media (hover: hover) { .nudge:hover { color: var(--text); border-color: #3a4560; } }
 .slider .val { text-align: right; font-variant-numeric: tabular-nums; color: var(--text); font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 input[type="range"] { -webkit-appearance: none; appearance: none; width: 100%; height: 30px; background: transparent; margin: 0; }
 input[type="range"]::-webkit-slider-runnable-track { height: 4px; background: var(--line); border-radius: 2px; }
@@ -208,10 +213,25 @@ input[type="range"]::-moz-range-thumb { width: 20px; height: 20px; border-radius
 .toast.show { opacity: 1; transform: translateX(-50%); }
 
 @media (min-width: 700px) {
-  .slider { grid-template-columns: 110px 1fr 80px; }
+  .slider { grid-template-columns: 110px 30px minmax(0, 1fr) 30px 84px; gap: 6px; }
+  .nudge { width: 30px; height: 30px; }
   .step { height: 34px; }
 }
 .card .row .btn { white-space: nowrap; padding: 10px 6px; font-size: 13.5px; min-width: 0; }
 .tools .chip { padding: 6px 10px; }
 .roll-zoom { position: absolute; right: 6px; bottom: 6px; display: flex; gap: 6px; }
 .roll-zoom button { width: 34px; height: 34px; border-radius: 50%; background: rgba(27, 33, 48, .9); border: 1px solid var(--line); font-size: 18px; font-weight: 700; color: var(--text); }
+
+/* arrow step level: compact pill in the transport, 3-way switch on desktop */
+.step-slot { display: contents; }
+.step-pill { flex: none; width: 46px; height: 40px; border-radius: 11px; background: var(--panel2); border: 1px solid var(--line); display: flex; flex-direction: column; align-items: center; justify-content: center; line-height: 1; gap: 2px; }
+.step-pill small { font-size: 9px; color: var(--muted); text-transform: uppercase; letter-spacing: .06em; font-weight: 700; }
+.step-pill b { font-size: 15px; color: var(--accent); }
+.step-seg { align-items: center; flex: none; }
+.step-seg-lbl { font-size: 11px; color: var(--muted); font-weight: 700; padding: 0 6px 0 4px; text-transform: uppercase; letter-spacing: .06em; }
+.step-seg button { flex: none; padding: 5px 9px; }
+.coach-btn { color: var(--accent); }
+
+/* visual editors (js/ui/graph-base.js) */
+.graph { position: relative; width: 100%; border-radius: 10px; background: var(--roll-bg); border: 1px solid var(--line); overflow: hidden; touch-action: pan-y; }
+.graph-canvas { display: block; width: 100%; height: 100%; touch-action: none; }

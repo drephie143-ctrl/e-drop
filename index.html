@@ -14,8 +14,17 @@
 <link rel="manifest" href="manifest.webmanifest">
 <title>E-Drop</title>
 <link rel="stylesheet" href="css/app.css">
+<link rel="stylesheet" href="css/sound.css">
+<link rel="stylesheet" href="css/mix.css">
+<link rel="stylesheet" href="css/coach.css">
+<link rel="stylesheet" href="css/desktop.css">
 </head>
 <body>
+<!-- On the phone .topbar, .panel and the panel bars are invisible wrappers (display: contents /
+     none), so the header, transport and tab sections stack exactly as before. On a computer
+     (body.desk, js/ui/desktop.js) the header and transport merge into one bar and each section
+     becomes a panel with its own title bar. -->
+<div class="topbar" id="topbar">
 <header class="top">
   <span class="logo-tile" aria-hidden="true">
     <svg viewBox="164 135 945 1040"><path d="M188 159H561V253H285V505H188Z" fill="#F06617"/><path d="M383 354H924V498H562V600H808V790H562V879H924V1006H383Z" fill="#184D72"/><path d="M495 641H535V684H868V641H908V760H868V722H535V760H495Z" fill="#F06617"/><path d="M993 829H1085V1151H747V1067H993Z" fill="#F06617"/></svg>
@@ -26,6 +35,7 @@
   </div>
   <button id="keyBtn" class="pill" aria-label="Key and scale">F min</button>
   <button id="bpmBtn" class="pill" aria-label="Tempo">128 BPM</button>
+  <button id="coachBtn" class="icon-btn coach-btn" aria-label="Coach: learn to make a track"></button>
   <button id="menuBtn" class="icon-btn" aria-label="Menu"></button>
 </header>
 
@@ -36,15 +46,33 @@
     <div><span id="clockBar">1.1</span> <span id="clockSec" class="clock-sec"></span></div>
     <div><span id="clockTime">0:00</span> <span id="renderBadge" class="render-badge" hidden>Rendering</span></div>
   </div>
+  <span id="stepSlot" class="step-slot"></span>
   <button id="btnLoop" class="t-btn sm toggle" aria-label="Loop the selected section"></button>
 </div>
 
+<div id="deskMeter" class="desk-meter desk-only" aria-label="Master loudness"></div>
+<div id="deskRight" class="desk-right desk-only"></div>
+</div>
+
 <main id="main">
-  <section id="tab-song" class="tab"></section>
-  <section id="tab-notes" class="tab"></section>
-  <section id="tab-drums" class="tab"></section>
-  <section id="tab-sound" class="tab"></section>
-  <section id="tab-mix" class="tab"></section>
+  <div class="panel" id="panel-song" data-panel="song">
+    <div class="panel-bar"></div>
+    <section id="tab-song" class="tab"></section>
+  </div>
+  <div class="split desk-only" id="split" role="separator" aria-orientation="horizontal" aria-label="Drag to resize the song panel" tabindex="0"></div>
+  <div class="panel" id="panel-editor" data-panel="editor">
+    <div class="panel-bar"></div>
+    <section id="tab-notes" class="tab"></section>
+    <section id="tab-drums" class="tab"></section>
+  </div>
+  <div class="panel" id="panel-sound" data-panel="sound">
+    <div class="panel-bar"></div>
+    <section id="tab-sound" class="tab"></section>
+  </div>
+  <div class="panel" id="panel-mix" data-panel="mix">
+    <div class="panel-bar"></div>
+    <section id="tab-mix" class="tab"></section>
+  </div>
 </main>
 
 <nav class="tabs" id="tabs">
@@ -54,6 +82,8 @@
   <button data-tab="sound"><i></i><span>Sound</span></button>
   <button data-tab="mix"><i></i><span>Mix</span></button>
 </nav>
+
+<aside id="coachDock" class="coach-dock" aria-label="Coach" hidden></aside>
 
 <div id="sheetWrap" class="sheet-wrap" hidden>
   <div class="sheet-backdrop"></div>

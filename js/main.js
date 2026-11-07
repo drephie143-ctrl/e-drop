@@ -7,12 +7,16 @@ import { templateProject, normalize } from './music/project.js';
 import { demoProject } from './music/demo.js';
 import { PianoRoll } from './ui/roll.js';
 import { renderSong } from './ui/song.js';
-import { renderNotes, renderDrums, renderSound, renderMix, curPattern } from './ui/screens.js';
-import { h, $, $$, openSheet, closeSheet, toast, seg, field, chip, slider } from './ui/dom.js';
+import { renderNotes, renderDrums, curPattern } from './ui/screens.js';
+import { renderSound } from './ui/sound.js';
+import { renderMix } from './ui/mix.js';
+import { h, $, $$, openSheet, closeSheet, toast, seg, field, chip, slider, stepLevelControl, setStepLevel } from './ui/dom.js';
+import { initDesk, renderDesk, deskGoTab, deskKey, visible, updateMeter, displaySheet, shortcutsSheet, zoomLevel } from './ui/desktop.js';
+import { initCoach } from './coach/coach.js';
 import { runDsp } from './dsp/client.js';
 import * as store from './store.js';
 
-export const APP_VERSION = 1;
+export const APP_VERSION = 2;
 const engine = new Engine();
 const ctx = engine.ctx;
 const settings = loadSettings();
@@ -27,12 +31,14 @@ const ICON = {
   stop: '<svg viewBox="0 0 24 24"><rect x="6.5" y="6.5" width="11" height="11" rx="2" fill="currentColor"/></svg>',
   home: '<svg viewBox="0 0 24 24"><path d="M6 6h2.2v12H6zM19 6v12l-9-6z" fill="currentColor"/></svg>',
   loop: '<svg viewBox="0 0 24 24"><path d="M17 4l3 3-3 3M20 7H8a4 4 0 0 0-4 4v1M7 20l-3-3 3-3M4 17h12a4 4 0 0 0 4-4v-1" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>',
+  coach: '<svg viewBox="0 0 24 24"><path d="M12 4 2.5 9 12 14l9.5-5z" fill="currentColor"/><path d="M6.5 11.3v4.2c0 1.6 2.5 3 5.5 3s5.5-1.4 5.5-3v-4.2" fill="none" stroke="currentColor" stroke-width="1.7"/><path d="M20.5 9.5v5" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></svg>',
   more: '<svg viewBox="0 0 24 24"><circle cx="5.5" cy="12" r="1.8" fill="currentColor"/><circle cx="12" cy="12" r="1.8" fill="currentColor"/><circle cx="18.5" cy="12" r="1.8" fill="currentColor"/></svg>',
   song: '<svg viewBox="0 0 24 24"><rect x="3" y="5" width="7" height="4" rx="1" fill="currentColor"/><rect x="11" y="5" width="10" height="4" rx="1" fill="currentColor" opacity=".5"/><rect x="3" y="11" width="11" height="4" rx="1" fill="currentColor" opacity=".5"/><rect x="15" y="11" width="6" height="4" rx="1" fill="currentColor"/><path d="M3 19.5c4-3 7 1 9-1.5s5-2 9 0" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>',
   notes: '<svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2" fill="none" stroke="currentColor" stroke-width="1.6"/><rect x="6" y="7" width="5" height="2.4" rx="1" fill="currentColor"/><rect x="10" y="11" width="7" height="2.4" rx="1" fill="currentColor"/><rect x="7" y="15" width="4" height="2.4" rx="1" fill="currentColor"/></svg>',
   drums: '<svg viewBox="0 0 24 24"><rect x="3.5" y="3.5" width="7.5" height="7.5" rx="1.8" fill="currentColor"/><rect x="13" y="3.5" width="7.5" height="7.5" rx="1.8" fill="none" stroke="currentColor" stroke-width="1.8"/><rect x="3.5" y="13" width="7.5" height="7.5" rx="1.8" fill="none" stroke="currentColor" stroke-width="1.8"/><rect x="13" y="13" width="7.5" height="7.5" rx="1.8" fill="currentColor"/></svg>',
   sound: '<svg viewBox="0 0 24 24"><path d="M3 12h2l2-6 3 12 3-15 3 15 2-6h3" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>',
   mix: '<svg viewBox="0 0 24 24"><path d="M6 4v16M12 4v16M18 4v16" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><rect x="3.5" y="13" width="5" height="3" rx="1" fill="currentColor"/><rect x="9.5" y="7" width="5" height="3" rx="1" fill="currentColor"/><rect x="15.5" y="11" width="5" height="3" rx="1" fill="currentColor"/></svg>',
+  keys: '<svg viewBox="0 0 24 24"><rect x="2.5" y="6" width="19" height="12" rx="2.5" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M6 9.6h1.4M9.6 9.6H11M13 9.6h1.4M16.6 9.6H18M6 12.4h1.4M16.6 12.4H18M8.5 15h7" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>',
 };
 
 // ---------------------------------------------------------------------------------------
@@ -43,9 +49,17 @@ const app = {
   ui: {
     tab: 'song', track: null, pat: {}, section: 0, grid: 1, noteLen: null, ghosts: true, barPx: 9, tlScroll: 0, drumPage: 0,
     chord: { prog: 'anthem', voicing: 'triad', barsPer: 1, octave: 0, gen: null }, snare: { bars: 8, voice: 'snare', kick: true }, openStrip: null,
+    // desktop layout (js/ui/desktop.js): editor panel 'notes' | 'drums', shared side slot 'sound' | 'mix', song fitted to the width
+    editor: 'notes', side: 'sound', tlFit: true,
   },
+  desk: false, // true at 1200 CSS px and wider: every panel on screen at once (js/ui/desktop.js)
+  ultra: false, // true at 2200 px and wider
+  meterNow: null, // latest engine.meter() reading { m, s, peak, gr }, set every frame while Mix (or the desktop top bar) shows
   render,
-  goTab(name) { app.ui.tab = name; render(); $('#main').scrollTop = 0; },
+  goTab(name) {
+    if (app.desk) { deskGoTab(app, name); app.emit('tab', name); return; }
+    app.ui.tab = name; render(); $('#main').scrollTop = 0; app.emit('tab', name);
+  },
   changed() { scheduleSave(); render(); },
   patternEdited(t, pat, rerenderUi) { scheduleSave(); queueRender(t, pat); if (rerenderUi) render(); },
   notesEdited(t, pat) { scheduleSave(); queueRender(t, pat); app.roll.draw(); },
@@ -77,9 +91,16 @@ const app = {
     if (s) playFx(ctx, s.in, e.type, ctx.currentTime + 0.02, Math.min(8, e.len * stepSec(app.project)), { vel: e.vel ?? 1, rootHz: mtof(app.project.key + 41) });
   },
   showValue(msg) { toast(msg); },
+  // tiny event bus for add-ons (the coach): 'render' after every screen render, 'edit' on every
+  // project change, 'tab' when the tab changes, 'play' / 'stop' from the transport, 'open' on a new project
+  listeners: {},
+  on(type, fn) { (app.listeners[type] || (app.listeners[type] = [])).push(fn); return () => { app.listeners[type] = app.listeners[type].filter((f) => f !== fn); }; },
+  emit(type, data) { for (const fn of app.listeners[type] || []) { try { fn(data); } catch (e) { console.error(e); } } },
 };
 app.roll = new PianoRoll(app);
 window.__edrop = app;
+// for add-ons (the coach); assigned here because they're function declarations further down
+Object.assign(app, { openProject, newSong, saveNow, openMenu, tempoSheet, keySheet, exportSheet, togglePlay, allChanged, toSectionStart });
 
 const soundTimers = new Map();
 const renderTimers = new Map();
@@ -101,6 +122,7 @@ let saveTimer = null;
 let dirty = false;
 function scheduleSave() {
   if (app.project) app.project.edited = true;
+  app.emit('edit');
   dirty = true;
   clearTimeout(saveTimer);
   saveTimer = setTimeout(saveNow, 400);
@@ -130,6 +152,7 @@ function openProject(p) {
   ensureAll(p, engine.sr);
   renderHeader();
   render();
+  app.emit('open', p);
 }
 
 async function loadProject(id) {
@@ -146,16 +169,21 @@ function render() {
   if (!p) return;
   const tab = app.ui.tab;
   $$('#tabs button').forEach((b) => b.setAttribute('aria-current', b.dataset.tab === tab ? 'page' : 'false'));
-  $$('.tab').forEach((s) => s.classList.toggle('active', s.id === `tab-${tab}`));
-  const root = $(`#tab-${tab}`);
-  $('#main').classList.toggle('fill', tab === 'notes');
-  if (tab === 'song') renderSong(app, root);
-  else if (tab === 'notes') renderNotes(app, root);
-  else if (tab === 'drums') renderDrums(app, root);
-  else if (tab === 'sound') renderSound(app, root);
-  else if (tab === 'mix') renderMix(app, root);
+  // a computer: every visible panel (js/ui/desktop.js); the phone: the current tab
+  if (app.desk) renderDesk(app);
+  else {
+    $$('.tab').forEach((s) => s.classList.toggle('active', s.id === `tab-${tab}`));
+    const root = $(`#tab-${tab}`);
+    $('#main').classList.toggle('fill', tab === 'notes');
+    if (tab === 'song') renderSong(app, root);
+    else if (tab === 'notes') renderNotes(app, root);
+    else if (tab === 'drums') renderDrums(app, root);
+    else if (tab === 'sound') renderSound(app, root);
+    else if (tab === 'mix') renderMix(app, root);
+  }
   renderHeader();
   renderTransport();
+  app.emit('render');
 }
 
 function renderHeader() {
@@ -228,7 +256,9 @@ function openMenu() {
     h('button', { class: 'mi', onclick: () => newSong(false) }, 'New song', h('small', {}, 'Festival template: sections, drums, FX and build sweep ready; you write the notes')),
     h('button', { class: 'mi', onclick: () => newSong(true) }, 'Load the demo song', h('small', {}, 'A full intro → build → drop → breakdown → build → drop')),
     h('button', { class: 'mi', onclick: openHelp }, 'How to make a track'),
-    h('button', { class: 'mi', onclick: openInstall }, 'Install on iPhone'),
+    app.desk ? h('button', { class: 'mi', onclick: shortcutsSheet }, 'Keyboard shortcuts', h('small', {}, 'Space play, L loop, F fit, N / D / S / M panels, C coach · press ? any time')) : null,
+    innerWidth >= 900 ? h('button', { class: 'mi', onclick: () => displaySheet(app) }, 'Display size', h('small', {}, `${Math.round(zoomLevel() * 100)}% · bigger text and controls for a big screen seen from a distance`)) : null,
+    h('button', { class: 'mi', onclick: openInstall }, onComputer() ? 'Install on this computer' : 'Install on iPhone'),
     h('div', { class: 'about' }, logoTile(), h('div', {}, h('b', {}, 'E-Drop'), h('br'), `by E-Estimating LLC · version ${APP_VERSION}. Songs stay on this device.`)));
 }
 
@@ -280,7 +310,31 @@ function openHelp() {
       h('li', {}, h('b', {}, 'Export: '), 'menu → Export song as WAV → Share or Save to Files.')));
 }
 
+// Edge and Chrome offer to install E-Drop as an app; keep the offer for the menu's button.
+// A computer is a mouse, not the layout: a laptop window under 1200 px has the phone layout.
+const onComputer = () => app.desk || matchMedia('(pointer: fine)').matches;
+const isLocal = () => /^(localhost|127\.0\.0\.1|\[::1\])$/.test(location.hostname);
+let installOffer = null;
+window.addEventListener('beforeinstallprompt', (e) => { e.preventDefault(); installOffer = e; });
+window.addEventListener('appinstalled', () => { installOffer = null; });
+
 function openInstall() {
+  if (onComputer()) {
+    openSheet('Install on this computer',
+      installOffer ? h('button', { class: 'btn primary big', onclick: async () => {
+        const offer = installOffer;
+        installOffer = null;
+        closeSheet();
+        offer.prompt();
+        try { await offer.userChoice; } catch { /* dismissed */ }
+      } }, 'Install E-Drop') : null,
+      h('ol', { class: 'help' },
+        h('li', {}, h('b', {}, 'Microsoft Edge: '), 'click ', h('b', {}, 'App available'), ' at the right end of the address bar, or menu ··· → Apps → Install this site as an app.'),
+        h('li', {}, h('b', {}, 'Google Chrome: '), 'click the install icon at the right end of the address bar, or menu ⋮ → Cast, save and share → Install.'),
+        h('li', {}, 'E-Drop opens in its own window without the browser bars. Pin it to the taskbar.', isLocal() ? ' Installed from this local address it needs the local server running; install it from the HTTPS address to use it offline.' : ' It works offline.')),
+      h('p', { class: 'hint' }, 'Press F11 in its window for full screen: the most room on a super-ultrawide. Menu → Display size makes everything bigger if you sit back from a big screen. Songs stay in this browser on this computer.'));
+    return;
+  }
   openSheet('Install on iPhone',
     h('ol', { class: 'help' },
       h('li', {}, 'Open E-Drop in Safari.'),
@@ -377,17 +431,18 @@ async function togglePlay() {
   renderTransport();
 }
 
+// back to the start of this section, or the previous one if we're right at it
+function toSectionStart() {
+  const st = sectionStarts(app.project);
+  const pos = engine.position();
+  let target = 0;
+  for (const s of st) if (s < pos - 0.5) target = s;
+  engine.seek(engine.loop ? engine.loop.from : target);
+}
+
 function wire() {
   $('#btnPlay').addEventListener('click', togglePlay);
-  $('#btnHome').addEventListener('click', () => {
-    const p = app.project;
-    const st = sectionStarts(p);
-    const pos = engine.position();
-    // back to the start of this section, or the previous one if we're right at it
-    let target = 0;
-    for (const s of st) if (s < pos - 0.5) target = s;
-    engine.seek(engine.loop ? engine.loop.from : target);
-  });
+  $('#btnHome').addEventListener('click', toSectionStart);
   $('#btnLoop').addEventListener('click', () => app.setLoop(!engine.loop));
   $('#menuBtn').addEventListener('click', openMenu);
   $('#bpmBtn').addEventListener('click', tempoSheet);
@@ -401,14 +456,25 @@ function wire() {
   engine.onEnded = () => renderTransport();
   document.addEventListener('pointerdown', unlock, true);
   document.addEventListener('visibilitychange', () => { if (!document.hidden && engine.playing) ctx.resume(); });
+  // Keyboard: Space play/stop, 1/2/3 arrow step size, the rest in js/ui/desktop.js (? lists them).
+  // Off while typing in a box or with Ctrl/Meta held. A focused slider isn't typing: Space still
+  // plays, and its own arrow keys (which it handles first) don't move the playhead.
   document.addEventListener('keydown', (e) => {
-    if (e.code === 'Space' && !/input|select|textarea/i.test(e.target.tagName)) { e.preventDefault(); togglePlay(); }
+    const el = e.target;
+    const typing = (el.tagName === 'INPUT' && !/^(range|checkbox|radio|button)$/i.test(el.type)) || /^(select|textarea)$/i.test(el.tagName) || el.isContentEditable;
+    if (typing || e.ctrlKey || e.metaKey || e.defaultPrevented || !app.project) return;
+    // a held Space would start and stop at the key-repeat rate
+    if (e.code === 'Space' || e.key === ' ') { e.preventDefault(); if (!e.repeat) togglePlay(); return; }
+    if (!e.altKey && /^(Digit|Numpad)[123]$/.test(e.code)) { setStepLevel(+e.code.slice(-1)); return; }
+    if (deskKey(e, app, { home: toSectionStart })) e.preventDefault();
   });
   window.addEventListener('beforeunload', () => { saveNow(); });
   for (const b of $$('#tabs button')) b.querySelector('i').innerHTML = ICON[b.dataset.tab];
   $('#btnHome').innerHTML = ICON.home;
   $('#btnLoop').innerHTML = ICON.loop;
   $('#menuBtn').innerHTML = ICON.more;
+  $('#coachBtn').innerHTML = ICON.coach;
+  $('#stepSlot').append(stepLevelControl({ compact: true }));
 }
 
 // Animation: clock, playheads, meters.
@@ -427,47 +493,66 @@ function frame() {
     $('#clockSec').textContent = sec ? sec.name : '';
     const secs = pos * 240 / p.bpm;
     $('#clockTime').textContent = `${Math.floor(secs / 60)}:${String(Math.floor(secs % 60)).padStart(2, '0')}`;
-    const tab = app.ui.tab;
-    if (tab === 'song') {
-      const ph = $('.tl-ph');
-      if (ph) ph.style.left = 64 + pos * app.ui.barPx + 'px';
+    // every panel on screen updates (on the phone that's the current tab)
+    const ui = app.ui;
+    if (visible(app, 'song')) {
+      const lbl = ui.tlLabel ?? 64;
+      const x = lbl + pos * ui.barPx;
+      for (const el of document.querySelectorAll('#tab-song .tl-ph, #tab-song .tl-ph-cap')) el.style.left = x + 'px';
       const tl = $('#timeline');
-      if (tl && engine.playing && app.ui.follow !== false) {
-        const x = 64 + pos * app.ui.barPx;
-        if (x > tl.scrollLeft + tl.clientWidth - 40 || x < tl.scrollLeft + 64) tl.scrollLeft = x - 80;
+      if (tl && engine.playing && ui.follow !== false) {
+        if (x > tl.scrollLeft + tl.clientWidth - 40 || x < tl.scrollLeft + lbl) tl.scrollLeft = x - lbl - 16;
       }
-    } else if (tab === 'notes' || tab === 'drums') {
-      const t = p.tracks.find((x) => x.id === app.ui.track);
+    }
+    const showNotes = visible(app, 'notes');
+    const showDrums = visible(app, 'drums');
+    if (showNotes || showDrums) {
+      const t = p.tracks.find((x) => x.id === ui.track);
       const pat = t && curPattern(app, t);
       let step = -1;
       if (engine.playing && sec && pat && sec.cells[t.id] === pat.id) step = (((pos - st[si]) * 16) % (pat.bars * 16));
-      if (tab === 'notes') { if (step !== app.roll.playStep && (engine.playing || app.roll.playStep >= 0)) app.roll.draw(step); }
-      else {
-        const cur = step >= 0 && Math.floor(step / 16) === app.ui.drumPage ? Math.floor(step) % 16 : -1;
+      if (showNotes && app.roll.el.isConnected) { if (step !== app.roll.playStep && (engine.playing || app.roll.playStep >= 0)) app.roll.draw(step); }
+      if (showDrums) {
+        // drum page rule: page k shows bars [k*span, (k+1)*span); data-step is the 16th within the page
+        const span = Math.max(1, ui.drumSpan || 1);
+        const page = step >= 0 ? Math.floor(step / (16 * span)) : -1;
+        const cur = step >= 0 && page === ui.drumPage ? Math.floor(step) - page * span * 16 : -1;
         if (cur !== lastStep) {
-          $$('.dgrid .step.cur').forEach((el) => el.classList.remove('cur'));
-          if (cur >= 0) $$(`.dgrid .step[data-step="${cur}"]`).forEach((el) => el.classList.add('cur'));
+          $$('#tab-drums .dgrid .step.cur').forEach((el) => el.classList.remove('cur'));
+          if (cur >= 0) $$(`#tab-drums .dgrid .step[data-step="${cur}"]`).forEach((el) => el.classList.add('cur'));
           lastStep = cur;
         }
       }
-    } else if (tab === 'mix') {
+    }
+    const showMix = visible(app, 'mix');
+    if (showMix || app.desk) {
       const L = engine.meter();
-      const el = $('#lufsM');
+      app.meterNow = { m: L.m, s: L.s, peak: L.peak, gr: L.gr };
+      if (app.desk) updateMeter(L);
+      const el = showMix && $('#lufsM');
       if (el) {
         el.textContent = L.m > -60 ? L.m.toFixed(1) : '–';
-        $('#lufsS').textContent = L.s > -60 ? L.s.toFixed(1) : '–';
-        $('#peakDb').textContent = L.peak > 1e-4 ? (20 * Math.log10(L.peak)).toFixed(1) : '–';
-        $('#grDb').textContent = L.gr < -0.05 ? L.gr.toFixed(1) : '0';
-        $('#lufsBar').style.width = `${Math.max(0, Math.min(100, ((L.s + 40) / 40) * 100))}%`;
+        const set = (sel, v) => { const x = $(sel); if (x) x.textContent = v; };
+        set('#lufsS', L.s > -60 ? L.s.toFixed(1) : '–');
+        set('#peakDb', L.peak > 1e-4 ? (20 * Math.log10(L.peak)).toFixed(1) : '–');
+        set('#grDb', L.gr < -0.05 ? L.gr.toFixed(1) : '0');
+        const bar = $('#lufsBar');
+        if (bar) bar.style.width = `${Math.max(0, Math.min(100, ((L.s + 40) / 40) * 100))}%`;
       }
     }
-    if (engine.playing !== frame.was) { frame.was = engine.playing; renderTransport(); }
+    if (engine.playing !== frame.was) { frame.was = engine.playing; renderTransport(); app.emit(engine.playing ? 'play' : 'stop'); }
   }
   requestAnimationFrame(frame);
 }
 
 async function boot() {
   wire();
+  // #tab=sound opens a tab directly (handy for links and screenshots)
+  const hashTab = /(?:^|[#&])tab=(song|notes|drums|sound|mix)/.exec(location.hash);
+  if (hashTab) app.ui.tab = hashTab[1];
+  initDesk(app, { icons: ICON });
+  app.on('render', () => { lastStep = -2; }); // the drum grid was rebuilt: re-mark the playing step
+  initCoach(app);
   store.askPersistent();
   let ok = false;
   try { if (settings.lastProject) ok = await loadProject(settings.lastProject); } catch (e) { console.warn(e); }
@@ -477,8 +562,7 @@ async function boot() {
     openProject(p);
   }
   requestAnimationFrame(frame);
-  const local = /^(localhost|127\.0\.0\.1|\[::1\])$/.test(location.hostname);
-  if ('serviceWorker' in navigator && !local && location.protocol === 'https:') {
+  if ('serviceWorker' in navigator && !isLocal() && location.protocol === 'https:') {
     const hadController = !!navigator.serviceWorker.controller;
     let reloaded = false;
     navigator.serviceWorker.addEventListener('controllerchange', () => {

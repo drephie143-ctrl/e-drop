@@ -1,4 +1,5 @@
 {
+  "id": "./",
   "name": "E-Drop",
   "short_name": "E-Drop",
   "description": "Festival EDM production studio: supersaws, big room bass, builds and drops.",
@@ -6,6 +7,8 @@
   "scope": "./",
   "display": "standalone",
   "orientation": "any",
+  "launch_handler": { "client_mode": "focus-existing" },
+  "categories": ["music", "entertainment"],
   "background_color": "#0a0c12",
   "theme_color": "#0a0c12",
   "icons": [

@@ -32,6 +32,38 @@ sections, drums, risers and build sweep already in; you write the notes), reload
 6. **Mix**: balance it. Aim for around −9 LUFS short-term in the drop.
 7. Menu → **Export song as WAV** → **Share or Save to Files**.
 
+## Graphs and arrows
+
+Every sound module has a graph you drag, kept in step with its sliders (`js/ui/graphs-sound.js`,
+`js/ui/graphs-mix.js`, on `js/ui/graph-base.js`). **Sound**: the unison voices, the source mixer, the
+filter's real response with its envelope, the amp envelope, pitch envelope, drive curve, stereo width,
+arpeggiator and trance gate; **Drums**: the kick (tuned to the key) and the kit levels; the **FX
+timeline** on the Notes tab. **Mix**: loudness history, a stage with a dot per track (pan × volume),
+master EQ and dynamics, reverb, delay and the sidechain pump. Audio updates when you let go; with
+**Audition** on, a note plays after each edit. Double-tap a handle to put it back to the preset.
+
+Every slider has ◀ ▶ arrows. They move by the step size: **1 Small**, **2 Medium** or **3 Large**
+(the STEP pill in the transport, the switch in the desktop top bar, or the 1 / 2 / 3 keys).
+Shift-click an arrow for one large step, Alt-click for a small one; hold it to repeat.
+
+## The coach
+
+The graduation cap opens the coach (`js/coach/`): a panel above the tab bar on the phone (collapse it
+to a slim bar), a column on the right on a computer. It never opens by itself.
+
+- **Learn**: a tour of the demo song, then 12 lessons from a first drop in 10 minutes to mastering
+  and export (chords, bass and kick, drums, the hook, supersaw design, arrangement, tension and
+  release, sidechain, mixing). Each step says what to do and why pros do it. **Show me** goes to the
+  screen and rings the control, **Do it for me** does it (with Undo), **Listen** plays the section.
+  Steps tick themselves when the song has it. Lessons that build your own track wait until you are
+  on your own song (Menu → New song).
+- **Song check**: scores Composition, Sound design, Arrangement and Mix and master, and lists what to
+  fix first, each with why and, where it can, a one-tap **Fix**.
+- **Explain**: a searchable glossary of every control and term, and **Explain mode**: tap any slider
+  label or card title for what it does and the sweet spot for this style.
+
+Progress is kept in this browser (localStorage).
+
 ## How it works
 
 - Every pattern is rendered offline (OfflineAudioContext) into a buffer when it changes
@@ -54,6 +86,65 @@ Any static HTTPS host works (GitHub Pages, Netlify, Cloudflare Pages). Then:
 1. Open the URL in Safari on the iPhone.
 2. Tap Share, then **Add to Home Screen**.
 3. Open E-Drop from the home screen. Sound plays with the silent switch on.
+
+## On a computer
+
+E-Drop is built for a big screen too, up to a 47–49" super-ultrawide (5120×1440 or 3840×1080). When
+the window is at least 1200 px wide it switches to the desktop layout (`js/ui/desktop.js`,
+`css/desktop.css`); narrower windows and phones keep the phone layout.
+
+- **One top bar**: the song, transport, clock, a master loudness meter (short-term LUFS with −14 and
+  −9 marks, and peak; click it for Mix), the arrow step size (1 Small · 2 Medium · 3 Large), key,
+  tempo, coach and menu. No tab bar: every panel is on screen at once, each with its own title bar and
+  scroll. Click in a panel to make it the current one.
+- **Ultrawide (2200 px and wider)**: Song across the full width on top; below it the editor (Notes or
+  Drums), Sound and Mix side by side. Sound and Mix lay their cards out in as many columns as fit.
+- **Desktop (1200–2199 px)**: Song on top; the editor and one side panel switchable between Sound and
+  Mix below.
+- **Coach**: the graduation cap docks the coach as a column on the right.
+- Drag the bar between Song and the panels below to share the height (double-click resets it).
+- **Song** fits the whole song to the width (**Fit**; the − + buttons or Ctrl + wheel zoom). The
+  rows fill the panel, each cell shows a picture of its pattern, click a track's name to edit it in
+  the editor and Sound, and M / S mute and solo it. The selected section's card sits on the right.
+- **Notes** fits the pattern to the width (**Fit**), zooms to 96 px per 16th, and names the notes when
+  they're wide enough. Ctrl + wheel zooms around the pointer, Shift + wheel scrolls sideways, Alt +
+  wheel changes the row height.
+- Sheets open as centred dialogs.
+- **Display size** (menu): Auto, 100%, 125%, 150% or 175%, for a big screen seen from a distance. Auto
+  picks 125% on a 5120×1440 screen at 100% Windows scaling and 150% on a 4K screen at 100%.
+
+### Keyboard shortcuts
+
+| Key | Does |
+|---|---|
+| Space | Play / stop |
+| L | Loop the selected section on / off |
+| Home | Back to the start of the section |
+| ← → | Playhead one bar back / forward (Shift: previous / next section) |
+| F | Fit the song (and the pattern) to the width |
+| N / D | Editor: Notes / Drums |
+| S / M | Show Sound / Mix |
+| C | Open or close the coach |
+| 1 / 2 / 3 | Arrow step size: small, medium, large (Shift-click an arrow for one large step, Alt-click for a small one) |
+| Esc | Close a sheet |
+| ? | The list of shortcuts |
+
+Shortcuts are off while you type in a box or hold Ctrl. Arrow keys on a focused slider move it.
+
+### Installing it from Edge or Chrome
+
+Open E-Drop's address in Microsoft Edge or Google Chrome (the HTTPS address, or
+http://localhost:8792 on this PC; a copy installed from localhost needs the local server running,
+because the offline cache is off there), then:
+
+- **Edge**: click **App available** at the right end of the address bar, or menu ··· → Apps →
+  **Install this site as an app**.
+- **Chrome**: click the install icon at the right end of the address bar, or menu ⋮ → Cast, save and
+  share → **Install**. Menu → Install on this computer in E-Drop shows the same steps, with an
+  Install button when the browser offers one.
+
+It opens in its own window without browser bars; pin it to the taskbar. F11 makes it full screen,
+the most room on a super-ultrawide. Songs stay in that browser on that computer.
 
 ## Running it on this PC
 

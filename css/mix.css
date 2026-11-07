@@ -1,0 +1,90 @@
+/* Mix tab: graph sizes, sections and legends (js/ui/mix.js, js/ui/graphs-mix.js).
+   Graph heights are custom properties so they grow with the screen and with desk mode. */
+.mx {
+  /* vh doesn't follow the root's CSS zoom (desktop Display size); --zoom puts it back */
+  --vh: calc(1vh / var(--zoom, 1));
+  --mx-h-loud: clamp(92px, calc(12 * var(--vh)), 170px);
+  --mx-h-stage: clamp(196px, calc(27 * var(--vh)), 360px);
+  --mx-h-eq: clamp(128px, calc(16 * var(--vh)), 230px);
+  --mx-h-dyn: clamp(148px, calc(19 * var(--vh)), 270px);
+  --mx-h-rev: clamp(124px, calc(16 * var(--vh)), 230px);
+  --mx-h-dly: clamp(116px, calc(15 * var(--vh)), 220px);
+  --mx-h-pump: clamp(132px, calc(17 * var(--vh)), 240px);
+}
+body.desk .mx {
+  --mx-h-loud: clamp(110px, calc(14 * var(--vh)), 200px);
+  --mx-h-stage: clamp(230px, calc(32 * var(--vh)), 440px);
+  --mx-h-eq: clamp(150px, calc(21 * var(--vh)), 300px);
+  --mx-h-dyn: clamp(170px, calc(24 * var(--vh)), 320px);
+  --mx-h-rev: clamp(150px, calc(20 * var(--vh)), 290px);
+  --mx-h-dly: clamp(140px, calc(19 * var(--vh)), 270px);
+  --mx-h-pump: clamp(156px, calc(21 * var(--vh)), 300px);
+}
+
+/* Touch: let the page scroll over a graph; a touch that grabs a handle stops the scroll (JS). */
+.mx .graph-canvas { touch-action: pan-y; }
+.mx .graph { box-shadow: inset 0 0 0 1px rgba(255, 255, 255, .02); }
+
+/* Cards lay their sections out by their own width, whatever the panel or screen. */
+.mx-card { container-type: inline-size; }
+.mx-split { display: grid; grid-template-columns: minmax(0, 1fr); gap: 16px; }
+.mx-sec { display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+.mx-sec + .mx-sec { border-top: 1px solid var(--line); padding-top: 14px; }
+.mx-sec .hint { font-size: 12px; }
+.mx-sub { display: flex; align-items: baseline; gap: 8px; min-width: 0; }
+.mx-sub b { font-size: 14px; letter-spacing: -.01em; }
+.mx-sub small { color: var(--muted); font-size: 11.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* the strips used to sit straight in the card's flex column: keep its 10 px gap between them */
+.mx-strips { display: flex; flex-direction: column; gap: 10px; }
+
+/* Side by side only when each section keeps a usable slider (≥ ~400 px), with a compact slider
+   grid there; on the phone and in a narrow panel everything stays one column. */
+@container (min-width: 820px) {
+  .mx-split { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 18px 24px; }
+  .mx-sec + .mx-sec { border-top: 0; padding-top: 0; }
+  .mx-split > .mx-sec:nth-child(n + 2) { border-left: 1px solid var(--line); padding-left: 24px; margin-left: -1px; }
+  .mx-split > .mx-sec:nth-child(2n + 1) { border-left: 0; padding-left: 0; margin-left: 0; }
+  .mx-split .slider { grid-template-columns: 92px 30px minmax(0, 1fr) 30px 70px; }
+  /* two columns for three sections: the pump gets the full width below reverb and delay */
+  .mx-split.three > .mx-sec:nth-child(3) { grid-column: 1 / -1; border-top: 1px solid var(--line); padding-top: 14px; }
+}
+@container (min-width: 1260px) {
+  .mx-split.three { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .mx-split.three > .mx-sec:nth-child(n + 2) { border-left: 1px solid var(--line); padding-left: 24px; margin-left: -1px; }
+  .mx-split.three > .mx-sec:nth-child(3) { grid-column: auto; border-top: 0; padding-top: 0; }
+}
+@container (min-width: 780px) {
+  .mx-strips { display: grid; grid-template-columns: repeat(auto-fill, minmax(360px, 1fr)); column-gap: 24px; }
+  .mx-strips .slider { grid-template-columns: 76px 30px minmax(0, 1fr) 30px 56px; }
+}
+
+/* Desk mode, wide Mix panel (container = the panel): a console layout instead of plain columns.
+   Loudness and the stage share the top row; Tracks, Master and the FX card span the width so
+   their own sections and strips sit side by side. */
+@container (min-width: 820px) {
+  body.desk #tab-mix > .stack.mx { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; columns: auto; align-items: stretch; }
+  body.desk #tab-mix > .stack.mx > * { margin: 0; }
+  body.desk #tab-mix > .stack.mx > .mx-card { grid-column: 1 / -1; }
+  body.desk #tab-mix > .stack.mx .mx-loud { flex: 1 1 auto; min-height: var(--mx-h-loud); }
+}
+@container (min-width: 1260px) {
+  body.desk #tab-mix > .stack.mx { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  body.desk #tab-mix > .stack.mx > .card[data-card="Mix stage"] { grid-column: span 2; }
+}
+
+/* the phone's 72 px slider label column (app.css) is 5 px short for this one label */
+@media (max-width: 699px) { .mx .slider[data-label="Pump release"] .lbl { font-size: 12px; } }
+
+/* meter numbers: colour the short-term reading by zone */
+.mx .mcol b.hot { color: var(--accent); }
+.mx .mcol b.warm { color: var(--solo); }
+.mx .mx-loud { margin-top: 2px; }
+
+/* pump legend: one entry per ducking track */
+.mx-legend { display: flex; flex-wrap: wrap; gap: 5px; }
+.mx-leg { display: inline-flex; align-items: center; gap: 5px; padding: 4px 8px 4px 7px; border-radius: 999px; border: 1px solid var(--line); background: var(--panel2); font-size: 11.5px; font-weight: 600; color: var(--muted); }
+.mx-leg i { width: 8px; height: 8px; border-radius: 50%; background: var(--c); flex: none; }
+.mx-leg b { color: var(--text); font-variant-numeric: tabular-nums; font-weight: 700; }
+.mx-leg.zero { opacity: .55; }
+.mx-leg.on { border-color: var(--c); color: var(--text); background: color-mix(in srgb, var(--c) 18%, var(--panel2)); }
+@media (hover: hover) { .mx-leg:hover { color: var(--text); } }

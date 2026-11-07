@@ -36,6 +36,16 @@ export function unisonOffsets(n, amount) {
   return out;
 }
 
+// Stereo position of unison voice i of n: evenly across ±spread, every other voice mirrored so
+// detune and pan don't line up. Mirrored by distance from the nearest end, so each voice's
+// partner on the other side matches it and an even stack stays balanced (with i % 2, two
+// voices both landed hard left).
+export function unisonPan(i, n, spread) {
+  if (n <= 1) return 0;
+  const k = Math.min(i, n - 1 - i);
+  return ((i / (n - 1)) * 2 - 1) * spread * (k % 2 ? -1 : 1);
+}
+
 // Saw and square waves with a fixed start phase, so unison voices don't all start in phase
 // (a phase-locked stack sounds like one loud flam on every note-on).
 const waveCache = new WeakMap();
@@ -130,7 +140,7 @@ export function playVoice(ctx, out, s, { freqs, t1, vel = 1, lite = false }) {
   const offs = unisonOffsets(nv, o1.detune);
   const per = (o1.level ?? 1) / Math.sqrt(nv);
   offs.forEach((c, i) => {
-    const pan = nv > 1 ? ((i / (nv - 1)) * 2 - 1) * o1.spread * (i % 2 ? -1 : 1) : 0;
+    const pan = unisonPan(i, nv, o1.spread);
     addOsc(o1.wave, 2 ** (o1.octave || 0), c + (o1.semi || 0) * 100, pan, per * (i === (nv >> 1) ? 1.15 : 1), nv > 1);
   });
   const o2 = s.osc2;

@@ -1,14 +1,14 @@
-// Notes (piano roll + chord helper + FX events), Drums, Sound (synth editor) and Mix screens.
-import { h, card, slider, seg, chip, select, field, openSheet, closeSheet, toast, fmtPct, fmtDb, fmtSec, fmtHz } from './dom.js';
-import { NOTE_NAMES, SCALES, PROGRESSIONS, VOICINGS, GENERATORS, generate, ARP_MODES, ARP_RATES, noteName, progKey, progressionChords, spell } from '../music/theory.js';
+// Notes (piano roll + chord helper + FX events) and Drums screens. Sound is in sound.js, Mix in mix.js.
+import { h, card, slider, seg, chip, select, field, openSheet, closeSheet, toast, fmtPct, fmtSec } from './dom.js';
+import { NOTE_NAMES, SCALES, PROGRESSIONS, VOICINGS, GENERATORS, generate, noteName, progKey, progressionChords, spell } from '../music/theory.js';
 import { newPattern, newTrack, uid } from '../music/project.js';
-import { PRESETS, presetsFor, presetParams, ROLES } from '../audio/presets.js';
 import { VOICES, KICKS, PATTERN_PRESETS, snareRoll, kickHz } from '../audio/drums.js';
-import { FX_TYPES, DELAY_TIMES } from '../audio/fx.js';
+import { FX_TYPES } from '../audio/fx.js';
+import { kitEditor, kickGraph, levelsGraph, auditionChip, split, fxTimeline } from './graphs-sound.js';
 
-const MELODIC = new Set(['lead', 'pluck', 'pad', 'stab', 'bass', 'sub']);
+export const MELODIC = new Set(['lead', 'pluck', 'pad', 'stab', 'bass', 'sub']);
 
-function trackChips(app, filter, onPick) {
+export function trackChips(app, filter, onPick) {
   const p = app.project;
   return h('div', { class: 'chips scroll' }, p.tracks.filter(filter).map((t) => h('button', {
     class: 'chip tchip' + (t.id === app.ui.track ? ' on' : ''), style: { '--c': t.color }, onclick: () => onPick(t),
@@ -155,13 +155,16 @@ function chordLabel(c, key, scale) {
 function fxEditor(app, t, pat) {
   const steps = pat.bars * 16;
   const add = (type, s, len) => { pat.fx.push({ type, s, len, vel: 1 }); app.patternEdited(t, pat, true); };
-  const list = pat.fx.map((e) => card(null,
+  if (app.ui.audition === undefined) app.ui.audition = true;
+  // the timeline graph and the sliders below edit the same events and follow each other
+  const tl = fxTimeline(app, t, pat);
+  const list = pat.fx.map((e, i) => card(null,
     h('div', { class: 'row' }, h('b', { class: 'grow' }, FX_TYPES[e.type].name), h('button', { class: 'chip', onclick: () => app.previewFx(e) }, '▶ Hear'),
       h('button', { class: 'chip danger', onclick: () => { pat.fx.splice(pat.fx.indexOf(e), 1); app.patternEdited(t, pat, true); } }, 'Remove')),
-    slider('Starts', e.s / 16, 0, pat.bars - 0.25, 0.25, (v) => { e.s = v * 16; }, (v) => `bar ${(v + 1).toFixed(2)}`, { onChange: () => app.patternEdited(t, pat, true) }),
-    slider('Length', e.len / 16, 0.25, pat.bars, 0.25, (v) => { e.len = v * 16; }, (v) => `${v} bars`, { onChange: () => app.patternEdited(t, pat, true) }),
-    slider('Level', e.vel ?? 1, 0, 1, 0.01, (v) => { e.vel = v; }, fmtPct, { onChange: () => app.patternEdited(t, pat, true) })));
-  return h('div', { class: 'stack' },
+    tl.bind(`fx.${i}.s`, slider('Starts', e.s / 16, 0, pat.bars - 0.25, 0.25, (v) => { e.s = v * 16; tl.redraw(); }, (v) => `bar ${(v + 1).toFixed(2)}`, { onChange: () => app.patternEdited(t, pat, true) }), () => e.s / 16),
+    tl.bind(`fx.${i}.len`, slider('Length', e.len / 16, 0.25, pat.bars, 0.25, (v) => { e.len = v * 16; tl.redraw(); }, (v) => `${v} bars`, { onChange: () => app.patternEdited(t, pat, true) }), () => e.len / 16),
+    tl.bind(`fx.${i}.vel`, slider('Level', e.vel ?? 1, 0, 1, 0.01, (v) => { e.vel = v; tl.redraw(); }, fmtPct, { onChange: () => app.patternEdited(t, pat, true) }), () => e.vel ?? 1)));
+  return h('div', { class: 'stack fx-stack' },
     card('Add an effect',
       h('p', { class: 'hint' }, `This pattern is ${pat.bars} bars. Risers and sweeps fill it and peak at the end, ready for the drop. Impacts hit on bar 1.`),
       h('div', { class: 'chips' },
@@ -171,6 +174,7 @@ function fxEditor(app, t, pat) {
         h('button', { class: 'chip', onclick: () => add('impact', 0, Math.min(steps, 64)) }, '+ Impact'),
         h('button', { class: 'chip', onclick: () => add('subdrop', 0, Math.min(steps, 32)) }, '+ Sub drop'),
         h('button', { class: 'chip', onclick: () => add('reverse', Math.max(0, steps - 16), 16) }, '+ Reverse cymbal'))),
+    pat.fx.length ? card('FX timeline', h('div', { class: 'row sg-play' }, auditionChip(app), h('span', { class: 'hint grow' }, 'The curve is how loud it gets; the dashed line is its filter or pitch sweep.')), tl.el) : null,
     list.length ? list : h('div', { class: 'empty' }, 'No effects in this pattern yet.'));
 }
 
@@ -185,39 +189,51 @@ export function renderDrums(app, root) {
   app.ui.track = t.id;
   const pat = curPattern(app, t);
   const ui = app.ui;
-  ui.drumPage = Math.min(ui.drumPage, pat.bars - 1);
+  if (ui.audition === undefined) ui.audition = true;
+  // Drum page rule (shared with main.js): drumSpan bars show at once, page k shows bars
+  // [k*span, (k+1)*span), and each step's data-step is its 16th within the page.
+  const span = drumSpanFor(root, pat.bars);
+  const was = ui.drumSpan || 1;
+  if (was !== span) ui.drumPage = Math.floor(((ui.drumPage || 0) * was) / span);
+  ui.drumSpan = span;
+  const pages = Math.ceil(pat.bars / span);
+  ui.drumPage = Math.max(0, Math.min(ui.drumPage || 0, pages - 1));
   const page = ui.drumPage;
+  const first = page * span * 16;
   const drums = p.tracks.filter((x) => x.role === 'drums');
-  const grid = h('div', { class: 'dgrid' }, VOICES.map((v) => h('div', { class: 'drow' },
-    h('button', { class: 'dname', onclick: () => app.preview(t, v.id) }, v.name),
-    h('div', { class: 'dcells' }, Array.from({ length: 16 }, (_, i) => {
-      const s = page * 16 + i;
-      const hs = pat.hits.filter((x) => x.v === v.id && x.s >= s && x.s < s + 1);
-      const roll = hs.length > 1 || hs.some((x) => x.s % 1);
-      const vel = hs.reduce((a, x) => Math.max(a, x.vel), 0);
-      return h('button', {
-        class: 'step' + (hs.length ? ' on' : '') + (roll ? ' roll' : '') + (i % 4 === 0 ? ' beat' : ''), 'data-step': i,
-        style: hs.length ? { opacity: String(0.45 + 0.55 * vel) } : null,
-        'aria-label': `${v.name} step ${s + 1}`,
-        onclick: () => {
-          if (hs.length) pat.hits = pat.hits.filter((x) => !hs.includes(x));
-          else { pat.hits.push({ v: v.id, s, vel: v.id === 'kick' ? 1 : 0.9 }); app.preview(t, v.id); }
-          app.patternEdited(t, pat, true);
-        },
-      });
-    })))));
-  const kit = t.kit;
-  const f = kickHz(p.key, kit.tune);
-  const kitCard = card('Kit',
-    field('Kick', select(Object.entries(KICKS).map(([k, v]) => [k, v.name]), kit.kick, (v) => { kit.kick = v; app.soundChanged(t); app.preview(t, 'kick'); })),
-    slider('Kick tune', kit.tune, -7, 7, 1, (v) => { kit.tune = v; }, (v) => `${v > 0 ? '+' : ''}${v} st · ${kickHz(p.key, v).toFixed(1)} Hz`, { onChange: () => { app.soundChanged(t); app.preview(t, 'kick'); } }),
-    h('p', { class: 'hint' }, `The kick is tuned to the key: ${noteName(Math.round(12 * Math.log2(f / 440) + 69))} (${f.toFixed(1)} Hz) with tune at ${kit.tune}.`),
-    VOICES.map((v) => slider(v.name, kit.levels[v.id], 0, 1.2, 0.01, (x) => { kit.levels[v.id] = x; }, fmtPct, { onChange: () => app.soundChanged(t) })),
-    slider('Hat decay', kit.hatDecay, 0.02, 0.2, 0.005, (x) => { kit.hatDecay = x; }, fmtSec, { onChange: () => { app.soundChanged(t); app.preview(t, 'hat'); } }));
+  const step = (v, i) => {
+    const s = first + i;
+    const hs = pat.hits.filter((x) => x.v === v.id && x.s >= s && x.s < s + 1);
+    const roll = hs.length > 1 || hs.some((x) => x.s % 1);
+    const vel = hs.reduce((a, x) => Math.max(a, x.vel), 0);
+    return h('button', {
+      class: 'step' + (hs.length ? ' on' : '') + (roll ? ' roll' : '') + (i % 4 === 0 ? ' beat' : ''), 'data-step': i,
+      style: hs.length ? { opacity: String(0.45 + 0.55 * vel) } : null,
+      'aria-label': `${v.name} step ${s + 1}`,
+      onclick: () => {
+        if (hs.length) pat.hits = pat.hits.filter((x) => !hs.includes(x));
+        else { pat.hits.push({ v: v.id, s, vel: v.id === 'kick' ? 1 : 0.9 }); app.preview(t, v.id); }
+        app.patternEdited(t, pat, true);
+      },
+    });
+  };
+  // one bar: the original 16-column grid; several bars: a 16-column grid per bar, side by side
+  const cells = (v) => (span === 1
+    ? h('div', { class: 'dcells' }, Array.from({ length: 16 }, (_, i) => step(v, i)))
+    : h('div', { class: 'dcells multi' }, Array.from({ length: span }, (_, b) => h('div', { class: 'dbar' }, Array.from({ length: 16 }, (_, i) => step(v, b * 16 + i))))));
+  const grid = h('div', { class: 'dgrid' + (span > 1 ? ' wide' : '') },
+    span > 1 ? h('div', { class: 'drow druler', 'aria-hidden': 'true' }, h('span', { class: 'dname' }),
+      h('div', { class: 'dcells multi' }, Array.from({ length: span }, (_, b) => h('div', { class: 'dbar-lbl' }, `Bar ${page * span + b + 1}`)))) : null,
+    VOICES.map((v) => h('div', { class: 'drow' },
+      h('button', { class: 'dname', onclick: () => app.preview(t, v.id) }, v.name),
+      cells(v))));
+  const pageLabel = (k) => (span === 1 ? `Bar ${k + 1}` : `Bars ${k * span + 1}–${Math.min(pat.bars, (k + 1) * span)}`);
+  const kitCard = drumKitCard(app, t);
+  watchDrumWidth(app, root);
   root.replaceChildren(
     drums.length > 1 ? trackChips(app, (x) => x.role === 'drums', (x) => { app.ui.track = x.id; app.render(); }) : '',
     patternBar(app, t, pat),
-    pat.bars > 1 ? seg(Array.from({ length: pat.bars }, (_, i) => [i, `Bar ${i + 1}`]), page, (v) => { ui.drumPage = v; app.render(); }, 'mini wrap') : '',
+    pages > 1 ? seg(Array.from({ length: pages }, (_, i) => [i, pageLabel(i)]), page, (v) => { ui.drumPage = v; app.render(); }, 'mini wrap dpages') : '',
     grid,
     h('div', { class: 'chips', style: { marginTop: '12px' } },
       PATTERN_PRESETS.map((pr) => h('button', { class: 'chip', onclick: () => {
@@ -230,6 +246,65 @@ export function renderDrums(app, root) {
       h('button', { class: 'chip on-accent', onclick: () => rollSheet(app, t, pat) }, 'Snare roll…')),
     h('div', { style: { height: '12px' } }),
     kitCard);
+}
+
+// How many bars of the drum grid fit side by side at 26 px or more per step: the largest
+// divisor of the pattern length that fits (so every page is whole), 1 on a phone.
+const DRUM_STEP_MIN = 26;
+function drumSpanFor(root, bars) {
+  const w = root.clientWidth;
+  if (!w || !(bars > 1)) return 1;
+  const cs = getComputedStyle(root);
+  const inner = w - (parseFloat(cs.paddingLeft) || 0) - (parseFloat(cs.paddingRight) || 0);
+  const perBar = 16 * DRUM_STEP_MIN + 15 * 2 + 10; // steps, the 2 px gaps, the gap between bars
+  const fit = Math.max(1, Math.floor((inner - 80 + 10) / perBar)); // 80: the voice names column
+  let span = 1;
+  for (let d = 2; d <= Math.min(fit, bars); d++) if (bars % d === 0) span = d;
+  return span;
+}
+
+// Re-lay the grid when the Drums panel changes width (desktop window or panel resize).
+function watchDrumWidth(app, root) {
+  if (root.__drumWatch || typeof ResizeObserver === 'undefined') return;
+  let timer = 0;
+  root.__drumWatch = new ResizeObserver(() => {
+    clearTimeout(timer);
+    timer = setTimeout(() => {
+      const grid = root.querySelector('.dgrid');
+      if (!grid || !root.clientWidth || !app.project) return;
+      const t = app.project.tracks.find((x) => x.id === app.ui.track && x.role === 'drums') || app.project.tracks.find((x) => x.role === 'drums');
+      const pat = curPattern(app, t);
+      if (!pat || drumSpanFor(root, pat.bars) === (app.ui.drumSpan || 1)) return;
+      const keep = app.ui.track; // in desk mode the other panels keep their own selection
+      renderDrums(app, root);
+      app.ui.track = keep;
+    }, 120);
+  });
+  root.__drumWatch.observe(root);
+}
+
+// Kit: the kick (waveform, amp shape and pitch sweep against the key) and the voice levels as
+// draggable graphs, with their sliders.
+function drumKitCard(app, t) {
+  const p = app.project;
+  const kit = t.kit;
+  const ed = kitEditor(app, t);
+  const tuneText = () => {
+    const f = kickHz(p.key, kit.tune);
+    return `The kick is tuned to the key: ${noteName(Math.round(12 * Math.log2(f / 440) + 69))} (${f.toFixed(1)} Hz) with tune at ${kit.tune}.`;
+  };
+  const hint = h('p', { class: 'hint' }, tuneText());
+  const after = () => { hint.textContent = tuneText(); };
+  return card('Kit',
+    h('div', { class: 'row sg-play' }, auditionChip(app), h('span', { class: 'hint grow' }, 'Drag the graphs or use the ◀ ▶ arrows. Double-tap a handle to reset it.')),
+    h('div', { class: 'kit-grid' },
+      split([kickGraph(ed, { after })], [
+        field('Kick', select(Object.entries(KICKS).map(([k, v]) => [k, v.name]), kit.kick, (v) => { kit.kick = v; ed.redrawAll(); after(); ed.commit('kick'); })),
+        ed.slider('Kick tune', kit, 'tune', -7, 7, 1, (v) => `${v > 0 ? '+' : ''}${v} st · ${kickHz(p.key, v).toFixed(1)} Hz`, { kind: 'kick', after }),
+        hint], 'kit-kick'),
+      split([levelsGraph(ed)], [
+        h('div', { class: 'kit-levels' }, VOICES.map((v) => ed.slider(v.name, kit.levels, v.id, 0, 1.2, 0.01, fmtPct, { kind: v.id }))),
+        ed.slider('Hat decay', kit, 'hatDecay', 0.02, 0.2, 0.005, fmtSec, { kind: 'hat' })], 'kit-lv')));
 }
 
 function rollSheet(app, t, pat) {
@@ -246,152 +321,4 @@ function rollSheet(app, t, pat) {
       app.patternEdited(t, pat, true);
       toast(`Snare roll written into pattern ${pat.name}`);
     } }, `Write into pattern ${pat.name}`));
-}
-
-// --- Sound -----------------------------------------------------------------------------------
-const logS = (label, v, min, max, set, fmt, done) => {
-  const toV = (x) => Math.log(x / min) / Math.log(max / min);
-  const fromV = (u) => min * (max / min) ** u;
-  return slider(label, toV(v), 0, 1, 0.001, (u) => set(fromV(u)), (u) => fmt(fromV(u)), { onChange: done });
-};
-
-export function renderSound(app, root) {
-  const p = app.project;
-  let t = p.tracks.find((x) => x.id === app.ui.track && MELODIC.has(x.role)) || p.tracks.find((x) => MELODIC.has(x.role));
-  if (!t) { root.replaceChildren(h('div', { class: 'empty' }, 'No synth tracks. Add one in Mix.')); return; }
-  app.ui.track = t.id;
-  const s = t.synth;
-  const done = () => app.soundChanged(t);
-  const S = (label, obj, key, min, max, step, fmt) => slider(label, obj[key], min, max, step, (v) => { obj[key] = v; }, fmt, { onChange: done });
-  const L = (label, obj, key, min, max, fmt) => logS(label, obj[key], min, max, (v) => { obj[key] = v; }, fmt, done);
-  const waves = [['sawtooth', 'Saw'], ['square', 'Square'], ['triangle', 'Tri'], ['sine', 'Sine']];
-  const pick = (fn) => (v) => { fn(v); done(); app.render(); };
-  const presets = presetsFor(t.role);
-  root.replaceChildren(h('div', { class: 'stack' },
-    trackChips(app, (x) => MELODIC.has(x.role), (x) => { app.ui.track = x.id; app.render(); }),
-    card(`${ROLES[t.role].name} presets`,
-      h('div', { class: 'chips' }, presets.map((pr) => chip(pr.name, t.preset === pr.name, () => { t.preset = pr.name; t.synth = presetParams(pr.name); app.soundChanged(t); app.render(); app.preview(t, 60 + (t.role === 'sub' || t.role === 'bass' ? -24 : 0), 0.6); }))),
-      field('Any preset', select([['', '—'], ...PRESETS.map((pr) => [pr.name, `${pr.name} (${ROLES[pr.role].short})`])], presets.some((x) => x.name === t.preset) ? '' : t.preset || '', (v) => { if (!v) return; t.preset = v; t.synth = presetParams(v); app.soundChanged(t); app.render(); }, 'All presets')),
-      h('div', { class: 'row' },
-        h('button', { class: 'btn', onclick: () => app.preview(t, t.role === 'sub' || t.role === 'bass' ? 41 : 65, 0.8) }, '▶ Note'),
-        h('button', { class: 'btn', onclick: () => { for (const m of [65, 68, 72]) app.preview(t, m - (t.role === 'sub' || t.role === 'bass' ? 24 : 0), 0.9); } }, '▶ Chord'))),
-    card('Oscillator 1 · unison',
-      seg(waves, s.osc.wave, pick((v) => { s.osc.wave = v; })),
-      S('Voices', s.osc, 'voices', 1, 9, 1, (v) => `${v}`),
-      S('Detune', s.osc, 'detune', 0, 1, 0.01, (v) => `±${Math.round(v * 55)} ct`),
-      S('Stereo', s.osc, 'spread', 0, 1, 0.01, fmtPct),
-      S('Octave', s.osc, 'octave', -2, 2, 1, (v) => `${v > 0 ? '+' : ''}${v}`),
-      S('Level', s.osc, 'level', 0, 1, 0.01, fmtPct)),
-    card('Oscillator 2, sub and noise',
-      seg(waves, s.osc2.wave, pick((v) => { s.osc2.wave = v; })),
-      S('Level', s.osc2, 'level', 0, 1, 0.01, fmtPct),
-      S('Octave', s.osc2, 'octave', -2, 2, 1, (v) => `${v > 0 ? '+' : ''}${v}`),
-      S('Semitone', s.osc2, 'semi', -12, 12, 1, (v) => `${v > 0 ? '+' : ''}${v}`),
-      S('Voices', s.osc2, 'voices', 1, 5, 1, String),
-      S('Detune', s.osc2, 'detune', 0, 1, 0.01, (v) => `±${Math.round(v * 55)} ct`),
-      S('Sub', s, 'sub', 0, 1, 0.01, fmtPct),
-      S('Noise', s, 'noise', 0, 1, 0.01, fmtPct)),
-    card('Filter',
-      seg([['lowpass', 'Low-pass'], ['bandpass', 'Band'], ['highpass', 'High-pass'], ['off', 'Off']], s.filter.type, pick((v) => { s.filter.type = v; })),
-      L('Cutoff', s.filter, 'cutoff', 40, 16000, fmtHz),
-      S('Resonance', s.filter, 'res', 0.3, 12, 0.1, (v) => v.toFixed(1)),
-      S('Env amount', s.filter, 'env', 0, 6, 0.1, (v) => `${v.toFixed(1)} oct`),
-      L('Attack', s.filter, 'a', 0.001, 3, fmtSec),
-      L('Decay', s.filter, 'd', 0.01, 4, fmtSec),
-      S('Sustain', s.filter, 's', 0, 1, 0.01, fmtPct),
-      seg([[12, '12 dB'], [24, '24 dB']], s.filter.slope, pick((v) => { s.filter.slope = v; }), 'mini')),
-    card('Amp envelope',
-      L('Attack', s.amp, 'a', 0.001, 3, fmtSec),
-      L('Decay', s.amp, 'd', 0.01, 4, fmtSec),
-      S('Sustain', s.amp, 's', 0, 1, 0.01, fmtPct),
-      L('Release', s.amp, 'r', 0.01, 4, fmtSec),
-      S('Volume', s, 'level', 0, 1, 0.01, fmtPct)),
-    card('Pitch, glide and character',
-      S('Pitch env', s.pitchEnv, 'amt', -12, 12, 1, (v) => `${v > 0 ? '+' : ''}${v} st`),
-      L('Pitch decay', s.pitchEnv, 'decay', 0.005, 0.5, fmtSec),
-      h('div', { class: 'row' }, chip('Mono', s.mono, pick((v) => { s.mono = v; })), h('span', { class: 'hint' }, 'Mono + glide slides between overlapping notes.')),
-      S('Glide', s, 'glide', 0, 0.4, 0.005, fmtSec),
-      S('Distortion', s, 'drive', 0, 1, 0.01, fmtPct),
-      S('Width', s, 'width', 0, 2, 0.01, (v) => (v < 0.02 ? 'Mono' : fmtPct(v)))),
-    card('Arpeggiator',
-      h('div', { class: 'row' }, chip('On', s.arp.on, pick((v) => { s.arp.on = v; })), h('span', { class: 'hint' }, 'Hold chords in the piano roll; the arp plays them.')),
-      seg(Object.keys(ARP_RATES).map((r) => [r, r]), s.arp.rate, pick((v) => { s.arp.rate = v; }), 'mini'),
-      seg(ARP_MODES.map((m) => [m, m === 'updown' ? 'Up-down' : m[0].toUpperCase() + m.slice(1)]), s.arp.mode, pick((v) => { s.arp.mode = v; }), 'mini wrap'),
-      seg([[1, '1 oct'], [2, '2 oct'], [3, '3 oct']], s.arp.octaves, pick((v) => { s.arp.octaves = v; }), 'mini'),
-      S('Gate', s.arp, 'gate', 0.1, 1, 0.01, fmtPct)),
-    card('Trance gate',
-      h('div', { class: 'row' }, chip('On', s.gate.on, pick((v) => { s.gate.on = v; })), seg([['1/8', '1/8'], ['1/16', '1/16'], ['1/32', '1/32']], s.gate.rate, pick((v) => { s.gate.rate = v; }), 'mini')),
-      seg([['square', 'Hard'], ['pluck', 'Pluck']], s.gate.shape, pick((v) => { s.gate.shape = v; }), 'mini'),
-      S('Depth', s.gate, 'depth', 0, 1, 0.01, fmtPct),
-      h('div', { class: 'gate' }, s.gate.pattern.map((on, i) => h('button', { class: 'step' + (on ? ' on' : '') + (i % 4 === 0 ? ' beat' : ''), 'aria-label': `Gate step ${i + 1}`, onclick: () => { s.gate.pattern[i] = on ? 0 : 1; done(); app.render(); } }))))));
-}
-
-// --- Mix -------------------------------------------------------------------------------------
-export function renderMix(app, root) {
-  const p = app.project;
-  const M = p.master;
-  const mm = () => app.mixChanged();
-  const MS = (label, key, min, max, step, fmt, obj = M) => slider(label, obj[key], min, max, step, (v) => { obj[key] = v; mm(); }, fmt);
-  const meter = card('Loudness',
-    h('div', { class: 'meter' },
-      h('div', { class: 'mcol' }, h('small', {}, 'Momentary'), h('b', { id: 'lufsM' }, '–'), h('small', {}, 'LUFS')),
-      h('div', { class: 'mcol' }, h('small', {}, 'Short-term'), h('b', { id: 'lufsS' }, '–'), h('small', {}, 'LUFS')),
-      h('div', { class: 'mcol' }, h('small', {}, 'Peak'), h('b', { id: 'peakDb' }, '–'), h('small', {}, 'dBFS')),
-      h('div', { class: 'mcol' }, h('small', {}, 'Limiter'), h('b', { id: 'grDb' }, '–'), h('small', {}, 'dB'))),
-    h('div', { class: 'mbar' }, h('div', { id: 'lufsBar' }), h('i', { style: { left: `${((-9 + 40) / 40) * 100}%` }, title: 'Club loud, −9 LUFS' }), h('i', { class: 'soft', style: { left: `${((-14 + 40) / 40) * 100}%` }, title: 'Streaming, −14 LUFS' })),
-    h('p', { class: 'hint' }, 'Festival masters sit around −9 to −7 LUFS short-term in the drop. Streaming turns everything down to about −14.'));
-  const master = card('Master',
-    MS('Low', 'low', -6, 6, 0.1, fmtDb), MS('Mid', 'mid', -6, 6, 0.1, fmtDb), MS('High', 'high', -6, 6, 0.1, fmtDb),
-    MS('Glue comp', 'glue', 0, 1, 0.01, fmtPct), MS('Drive', 'drive', 0, 9, 0.1, fmtDb), MS('Ceiling', 'ceiling', -3, -0.1, 0.1, fmtDb), MS('Output', 'volume', 0, 1.2, 0.01, fmtPct));
-  const fx = card('Reverb, delay and sidechain',
-    slider('Reverb size', M.revSize, 0.8, 6, 0.1, (v) => { M.revSize = v; }, fmtSec, { onChange: () => app.structureChanged() }),
-    slider('Damping', M.revDamp, 0, 1, 0.01, (v) => { M.revDamp = v; }, fmtPct, { onChange: () => app.structureChanged() }),
-    MS('Reverb level', 'revLevel', 0, 1.5, 0.01, fmtPct),
-    field('Delay time (synced)', seg(Object.keys(DELAY_TIMES).map((k) => [k, k]), M.dlyTime, (v) => { M.dlyTime = v; mm(); app.render(); }, 'mini')),
-    MS('Feedback', 'dlyFb', 0, 0.85, 0.01, fmtPct),
-    MS('Delay level', 'dlyLevel', 0, 1.5, 0.01, fmtPct),
-    slider('Pump release', M.pumpRelease, 0.15, 1, 0.01, (v) => { M.pumpRelease = v; }, (v) => `${v.toFixed(2)} beat`, { onChange: () => app.pumpChanged() }),
-    slider('Pump curve', M.pumpCurve, 0.6, 4, 0.1, (v) => { M.pumpCurve = v; }, (v) => (v < 1.5 ? 'Smooth' : v < 2.6 ? 'Classic' : 'Hard'), { onChange: () => app.pumpChanged() }),
-    MS('Pump on FX', 'pumpFx', 0, 1, 0.01, fmtPct),
-    h('p', { class: 'hint' }, 'Every track ducks under the kick by its own Pump amount below, and recovers over the release.'));
-  const anySolo = p.tracks.some((t) => t.mix.solo);
-  const strips = p.tracks.map((t) => {
-    const x = t.mix;
-    const S = (label, key, min, max, step, fmt) => slider(label, x[key], min, max, step, (v) => { x[key] = v; mm(); }, fmt);
-    const open = app.ui.openStrip === t.id;
-    return h('div', { class: 'strip' + (x.mute || (anySolo && !x.solo) ? ' dim' : '') },
-      h('div', { class: 'row' },
-        h('span', { class: 'dot', style: { background: t.color } }),
-        h('button', { class: 'sname grow', onclick: () => { app.ui.openStrip = open ? null : t.id; app.render(); } }, t.name, t.name.startsWith(ROLES[t.role].short) ? null : h('small', {}, ROLES[t.role].short)),
-        h('button', { class: 'ms' + (x.mute ? ' m' : ''), onclick: () => { x.mute = !x.mute; mm(); app.render(); } }, 'M'),
-        h('button', { class: 'ms' + (x.solo ? ' s' : ''), onclick: () => { x.solo = !x.solo; mm(); app.render(); } }, 'S')),
-      S('Volume', 'vol', 0, 1.2, 0.01, fmtPct),
-      S('Pump', 'duck', 0, 1, 0.01, fmtPct),
-      open ? [S('Pan', 'pan', -1, 1, 0.01, (v) => (Math.abs(v) < 0.02 ? 'C' : v < 0 ? `L${Math.round(-v * 100)}` : `R${Math.round(v * 100)}`)),
-        S('Reverb', 'rev', 0, 1, 0.01, fmtPct), S('Delay', 'dly', 0, 1, 0.01, fmtPct),
-        h('div', { class: 'row' },
-          h('button', { class: 'btn', onclick: () => { const n = prompt('Track name', t.name); if (n && n.trim()) { t.name = n.trim().slice(0, 16); app.changed(); } } }, 'Rename'),
-          h('button', { class: 'btn danger', onclick: () => {
-            if (!confirm(`Delete the ${t.name} track and its patterns?`)) return;
-            p.tracks.splice(p.tracks.indexOf(t), 1);
-            p.automation = p.automation.filter((l) => l.target !== t.id);
-            for (const s of p.sections) delete s.cells[t.id];
-            app.structureChanged();
-          } }, 'Delete track'))] : h('button', { class: 'more', onclick: () => { app.ui.openStrip = t.id; app.render(); } }, 'Pan, sends, rename…'));
-  });
-  root.replaceChildren(h('div', { class: 'stack' }, meter, card('Tracks', strips,
-    h('button', { class: 'btn', onclick: () => addTrackSheet(app) }, '+ Add track')), master, fx));
-}
-
-function addTrackSheet(app) {
-  const p = app.project;
-  openSheet('Add a track', h('div', { class: 'list' }, Object.entries(ROLES).map(([role, r]) => h('button', { class: 'mi', onclick: () => {
-    const t = newTrack(role, `${r.short} ${p.tracks.filter((x) => x.role === role).length + 1}`);
-    t.patterns.push(newPattern('A', role === 'drums' ? 1 : 4));
-    p.tracks.push(t);
-    app.ui.track = t.id;
-    closeSheet();
-    app.structureChanged();
-    toast(`${t.name} added. Put its pattern into a section in Song.`);
-  } }, h('span', { class: 'dot', style: { background: r.color } }), ` ${r.name}`))));
 }
