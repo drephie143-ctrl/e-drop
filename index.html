@@ -1,0 +1,66 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="E-Drop">
+<meta name="theme-color" content="#0a0c12">
+<meta name="description" content="E-Drop: a festival EDM production studio. Supersaws, big room bass, builds and drops.">
+<link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+<link rel="icon" type="image/png" href="icons/icon-192.png">
+<link rel="manifest" href="manifest.webmanifest">
+<title>E-Drop</title>
+<link rel="stylesheet" href="css/app.css">
+</head>
+<body>
+<header class="top">
+  <span class="logo-tile" aria-hidden="true">
+    <svg viewBox="164 135 945 1040"><path d="M188 159H561V253H285V505H188Z" fill="#F06617"/><path d="M383 354H924V498H562V600H808V790H562V879H924V1006H383Z" fill="#184D72"/><path d="M495 641H535V684H868V641H908V760H868V722H535V760H495Z" fill="#F06617"/><path d="M993 829H1085V1151H747V1067H993Z" fill="#F06617"/></svg>
+  </span>
+  <div class="titles">
+    <div class="app-name">E-Drop</div>
+    <button id="projName" class="proj-name" aria-label="Rename song">Untitled</button>
+  </div>
+  <button id="keyBtn" class="pill" aria-label="Key and scale">F min</button>
+  <button id="bpmBtn" class="pill" aria-label="Tempo">128 BPM</button>
+  <button id="menuBtn" class="icon-btn" aria-label="Menu"></button>
+</header>
+
+<div class="transport">
+  <button id="btnHome" class="t-btn" aria-label="Back to section start"></button>
+  <button id="btnPlay" class="t-btn play" aria-label="Play"></button>
+  <div class="clock">
+    <div><span id="clockBar">1.1</span> <span id="clockSec" class="clock-sec"></span></div>
+    <div><span id="clockTime">0:00</span> <span id="renderBadge" class="render-badge" hidden>Rendering</span></div>
+  </div>
+  <button id="btnLoop" class="t-btn sm toggle" aria-label="Loop the selected section"></button>
+</div>
+
+<main id="main">
+  <section id="tab-song" class="tab"></section>
+  <section id="tab-notes" class="tab"></section>
+  <section id="tab-drums" class="tab"></section>
+  <section id="tab-sound" class="tab"></section>
+  <section id="tab-mix" class="tab"></section>
+</main>
+
+<nav class="tabs" id="tabs">
+  <button data-tab="song"><i></i><span>Song</span></button>
+  <button data-tab="notes"><i></i><span>Notes</span></button>
+  <button data-tab="drums"><i></i><span>Drums</span></button>
+  <button data-tab="sound"><i></i><span>Sound</span></button>
+  <button data-tab="mix"><i></i><span>Mix</span></button>
+</nav>
+
+<div id="sheetWrap" class="sheet-wrap" hidden>
+  <div class="sheet-backdrop"></div>
+  <div class="sheet" role="dialog" aria-modal="true"><div class="sheet-grip"></div><div id="sheetBody"></div></div>
+</div>
+<div id="toast" class="toast" role="status" aria-live="polite"></div>
+
+<script type="module" src="js/main.js"></script>
+</body>
+</html>
