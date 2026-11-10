@@ -117,6 +117,9 @@ the window is at least 1200 px wide it switches to the desktop layout (`js/ui/de
 
 | Key | Does |
 |---|---|
+| Backspace | Undo the last change; press again for the one before, and so on back to the first |
+| Shift + Backspace | Redo (Ctrl+Y and Ctrl+Shift+Z too; Ctrl+Z also undoes) |
+| Esc | Reset the song to the original: the demo as it ships, a new song as the template, a copy as it was copied. Backspace brings your changes back |
 | Space | Play / stop |
 | L | Loop the selected section on / off |
 | Home | Back to the start of the section |
@@ -126,10 +129,21 @@ the window is at least 1200 px wide it switches to the desktop layout (`js/ui/de
 | S / M | Show Sound / Mix |
 | C | Open or close the coach |
 | 1 / 2 / 3 | Arrow step size: small, medium, large (Shift-click an arrow for one large step, Alt-click for a small one) |
-| Esc | Close a sheet |
+| Esc | With a sheet, a coach definition or a Show me ring up: closes it (press again to reset) |
 | ? | The list of shortcuts |
 
-Shortcuts are off while you type in a box or hold Ctrl. Arrow keys on a focused slider move it.
+Shortcuts are off while you type in a box, and all but undo and redo while you hold Ctrl. Arrow keys
+on a focused slider move it.
+
+**Undo** (`js/undo.js`) counts one gesture as one change: a tap, a drag, a hold on a ◀ ▶ arrow, a
+key sheet pick, a coach Do it for me. Each change keeps the whole song, so undo is exact, and the
+music keeps playing. The toast says what was undone (for example "Undid Lead notes · 6 more to
+undo"), and the track it was on is selected so you see it. Up to 200 changes per song are kept until
+the page reloads. The original that Esc goes back to is saved with the song, so it survives a
+reload; songs from before version 3 get theirs the first time they open (the demo's is always the
+demo as it ships). The song from before a reset is saved too, so Backspace can undo a reset even
+after a reload. A second Esc within a second of one that closed a sheet or a coach pop-up doesn't
+reset, and the undo keys wait while a note or a slider is still held down.
 
 ### Installing it from Edge or Chrome
 

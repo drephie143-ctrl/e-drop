@@ -305,9 +305,13 @@ export function initCoach(app) {
     const u = R.undo;
     if (!u) return;
     R.undo = null;
-    app.openProject(u.snap);
-    app.changed();
-    toast('Undone');
+    // the change is the last step in the app's history (js/undo.js): undo it there, so the music
+    // keeps playing and Shift+Backspace can redo it; the old way if the history doesn't have it
+    if (!(app.history && app.history.undoIf(u.snap))) {
+      app.openProject(u.snap);
+      app.changed();
+      toast('Undone');
+    }
     renderDock(true);
   }
   function fix(f) {
@@ -403,7 +407,18 @@ export function initCoach(app) {
     }
   }, true);
   document.addEventListener('pointerdown', (e) => { if (pop && !pop.contains(e.target)) closePop(); }, true);
-  document.addEventListener('keydown', (e) => { if (e.key === 'Escape') { closePop(); spot.hide(); } });
+  // Esc first closes a definition or the Show me ring; only with neither up does it reach main.js,
+  // where it resets the song (js/undo.js). Capture phase, so this runs before that.
+  // A ring that isn't showing (its target scrolled away or under a sheet) is cleared without
+  // taking the key, so the same Esc still closes the sheet. A quick second Esc after one that
+  // closed something doesn't reset either (main.js undoKey, app.escClosedAt).
+  document.addEventListener('keydown', (e) => {
+    if (e.key !== 'Escape' || !(pop || spot.active)) return;
+    const shown = !!pop || !spot.ring.hidden;
+    closePop();
+    spot.hide();
+    if (shown) { e.preventDefault(); app.escClosedAt = performance.now(); }
+  }, true);
   window.addEventListener('resize', closePop);
 
   // --- rendering -------------------------------------------------------------------------------------

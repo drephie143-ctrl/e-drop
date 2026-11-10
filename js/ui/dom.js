@@ -74,6 +74,11 @@ export function increments(min, max, step) {
 }
 const decimals = (step) => { const t = String(step); return t.includes('e-') ? +t.split('e-')[1] : (t.split('.')[1] || '').length; };
 
+// Sliders whose onChange is still waiting (a keyboard nudge commits 260 ms later). Undo runs them
+// first (js/undo.js), so a commit can't fire after the song was swapped and re-render the old track.
+const pendingCommits = new Set();
+export function flushSliders() { for (const c of [...pendingCommits]) c(); }
+
 // A labelled range with ◀ ▶ arrows. The arrows move by the global step level (1, 2, 3);
 // Shift-click moves by the large step and Alt-click by the small one. Hold an arrow to repeat.
 // Arrow keys on the focused slider use the same steps. onInput runs on every change; onChange
@@ -86,8 +91,8 @@ export function slider(label, value, min, max, step, onInput, fmt, { onChange, i
   const incs = inc || increments(min, max, step);
   let cur = +value;
   let commitTimer = null;
-  const commit = () => { clearTimeout(commitTimer); commitTimer = null; if (onChange) onChange(cur); };
-  const later = () => { clearTimeout(commitTimer); commitTimer = setTimeout(commit, 260); };
+  const commit = () => { clearTimeout(commitTimer); commitTimer = null; pendingCommits.delete(commit); if (onChange) onChange(cur); };
+  const later = () => { clearTimeout(commitTimer); commitTimer = setTimeout(commit, 260); pendingCommits.add(commit); };
   const setTo = (v, fire) => {
     v = Math.min(max, Math.max(min, v));
     v = +(min + Math.round((v - min) / step) * step).toFixed(dec);

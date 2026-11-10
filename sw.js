@@ -1,11 +1,11 @@
 // Offline cache for the app shell. Network first, so a new version shows up as soon as
 // the phone is online; the cache is the fallback when it's offline.
 // Bump VERSION when files change.
-const VERSION = 'e-drop-v2';
+const VERSION = 'e-drop-v3';
 const SHELL = [
   './', 'index.html', 'manifest.webmanifest',
   'css/app.css', 'css/sound.css', 'css/mix.css', 'css/coach.css', 'css/desktop.css',
-  'js/main.js', 'js/store.js',
+  'js/main.js', 'js/store.js', 'js/undo.js',
   'js/audio/engine.js', 'js/audio/render.js', 'js/audio/synth.js', 'js/audio/presets.js', 'js/audio/drums.js', 'js/audio/fx.js',
   'js/music/theory.js', 'js/music/project.js', 'js/music/demo.js',
   'js/ui/dom.js', 'js/ui/roll.js', 'js/ui/song.js', 'js/ui/screens.js', 'js/ui/sound.js', 'js/ui/mix.js', 'js/ui/desktop.js',

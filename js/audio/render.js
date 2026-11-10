@@ -136,7 +136,10 @@ async function placeFromBank(off, input, s, notes, st, sr) {
 export function ensure(project, track, pat, sr) {
   const sig = sigOf(project, track, pat);
   const c = cache.get(pat.id);
-  if (c && c.sig === sig) return Promise.resolve(c);
+  // Current, and nothing else on its way. With a render of another version queued (an undo came
+  // in while the edit it undoes was still rendering), ask again below: that marks the queued one
+  // superseded, so it can't land in the cache after the undo.
+  if (c && c.sig === sig && (!c.pendingSig || c.pendingSig === sig)) return Promise.resolve(c);
   if (c && c.pendingSig === sig) return c.pending;
   pendingCount++;
   renderState.busy = pendingCount;
@@ -144,8 +147,8 @@ export function ensure(project, track, pat, sr) {
   const job = chain.then(async () => {
     // a newer edit may already have superseded this one
     const cur = cache.get(pat.id);
-    if (cur && cur.sig === sig) return cur;
     if (cur && cur.pendingSig && cur.pendingSig !== sig) return cur; // superseded, skip
+    if (cur && cur.sig === sig) { if (cur.pendingSig === sig) { delete cur.pendingSig; delete cur.pending; } return cur; }
     const r = await renderOne(project, track, pat, sr);
     const entry = { sig, ...r, bpm: project.bpm, key: project.key };
     const latest = cache.get(pat.id);

@@ -10,13 +10,14 @@ import { renderSong } from './ui/song.js';
 import { renderNotes, renderDrums, curPattern } from './ui/screens.js';
 import { renderSound } from './ui/sound.js';
 import { renderMix } from './ui/mix.js';
-import { h, $, $$, openSheet, closeSheet, toast, seg, field, chip, slider, stepLevelControl, setStepLevel } from './ui/dom.js';
+import { h, $, $$, openSheet, closeSheet, sheetOpen, toast, seg, field, chip, slider, stepLevelControl, setStepLevel } from './ui/dom.js';
 import { initDesk, renderDesk, deskGoTab, deskKey, visible, updateMeter, displaySheet, shortcutsSheet, zoomLevel } from './ui/desktop.js';
 import { initCoach } from './coach/coach.js';
+import { initUndo, ensureOriginal, snapshot, demoLike } from './undo.js';
 import { runDsp } from './dsp/client.js';
 import * as store from './store.js';
 
-export const APP_VERSION = 2;
+export const APP_VERSION = 3;
 const engine = new Engine();
 const ctx = engine.ctx;
 const settings = loadSettings();
@@ -66,7 +67,11 @@ const app = {
   soundChanged(t) {
     scheduleSave();
     clearTimeout(soundTimers.get(t.id));
-    soundTimers.set(t.id, setTimeout(() => { for (const pat of t.patterns) ensure(app.project, t, pat, engine.sr); }, 180));
+    // the track as it is in the song when the timer fires (an undo may have swapped it)
+    soundTimers.set(t.id, setTimeout(() => {
+      const live = app.project.tracks.find((x) => x.id === t.id);
+      if (live) for (const pat of live.patterns) ensure(app.project, live, pat, engine.sr);
+    }, 180));
   },
   pumpChanged() { scheduleSave(); for (const t of app.project.tracks) if (t.role === 'drums') app.soundChanged(t); },
   arrangementChanged() { scheduleSave(); clampLoop(); engine.refresh(); render(); },
@@ -106,7 +111,14 @@ const soundTimers = new Map();
 const renderTimers = new Map();
 function queueRender(t, pat) {
   clearTimeout(renderTimers.get(pat.id));
-  renderTimers.set(pat.id, setTimeout(() => ensure(app.project, t, pat, engine.sr), 120));
+  renderTimers.set(pat.id, setTimeout(() => {
+    const live = app.project.tracks.find((x) => x.id === t.id);
+    const lp = live && live.patterns.find((q) => q.id === pat.id);
+    if (lp) ensure(app.project, live, lp, engine.sr);
+  }, 120));
+}
+function cancelRenderTimers() {
+  for (const m of [soundTimers, renderTimers]) { for (const id of m.values()) clearTimeout(id); m.clear(); }
 }
 
 function clampLoop() {
@@ -140,6 +152,8 @@ function openProject(p) {
   engine.stop();
   engine.loop = null;
   normalize(p);
+  // the song as it was first made, for Esc (js/undo.js); stored with the song from now on
+  if (ensureOriginal(p)) store.saveProject(JSON.parse(JSON.stringify(p))).catch(() => { /* storage blocked */ });
   app.project = p;
   app.ui.track = (p.tracks.find((t) => t.role === 'lead') || p.tracks[0] || {}).id;
   app.ui.pat = {};
@@ -153,6 +167,61 @@ function openProject(p) {
   renderHeader();
   render();
   app.emit('open', p);
+}
+
+// Undo, redo and reset (js/undo.js): put a snapshot in as the song without resetting the screens
+// or stopping the music. The selection stays where it still exists; app.undoFocus, when set,
+// selects the track (and pattern) the step changed, so the change is on screen.
+function swapProject(json) {
+  const old = app.project;
+  const p = normalize(JSON.parse(json));
+  p.original = old.original;
+  if (old.beforeReset) p.beforeReset = old.beforeReset; // undo.js drops it when a reset is undone
+  p.edited = true;
+  p.updated = old.updated;
+  const was = engine.playing;
+  const pos = engine.position();
+  if (was) engine.stop();
+  // renders queued for the song being replaced must not land after it
+  cancelRenderTimers();
+  app.project = p;
+  engine.project = p;
+  engine.rebuild();
+  const ui = app.ui;
+  const has = (id) => p.tracks.some((t) => t.id === id);
+  const focus = app.undoFocus;
+  app.undoFocus = null;
+  if (focus && focus.track && has(focus.track)) { ui.track = focus.track; if (focus.pat) ui.pat[focus.track] = focus.pat; }
+  if (!has(ui.track)) {
+    const o = old.tracks.find((t) => t.id === ui.track);
+    const same = o && p.tracks.find((t) => t.role === o.role && t.name === o.name);
+    ui.track = (same || p.tracks.find((t) => t.role === 'lead') || p.tracks[0] || {}).id;
+  }
+  for (const [tid, qid] of Object.entries(ui.pat)) {
+    const t = p.tracks.find((x) => x.id === tid);
+    if (!t || !t.patterns.some((q) => q.id === qid)) delete ui.pat[tid];
+  }
+  if (ui.openStrip && !has(ui.openStrip)) ui.openStrip = null;
+  // the selected section by id, so undoing a Move keeps it (and the loop) on the section that moved;
+  // after undoing an Add or a Duplicate, the nearest section before it that still exists
+  let j = ui.section;
+  let k = -1;
+  while (j >= 0 && (k = p.sections.findIndex((s) => old.sections[j] && s.id === old.sections[j].id)) < 0) j--;
+  ui.section = k >= 0 ? k : Math.max(0, Math.min(ui.section, p.sections.length - 1));
+  clampLoop();
+  // the piano roll keeps its scroll when it still shows the same pattern; a note held down in it
+  // belongs to the old song (main.js ignores the undo keys mid-drag, this is the backstop)
+  const R = app.roll;
+  R.drag = null;
+  if (R.pat) {
+    const t = p.tracks.find((x) => x.patterns.some((q) => q.id === R.pat.id));
+    if (t) { R.track = t; R.pat = t.patterns.find((q) => q.id === R.pat.id); }
+  }
+  ensureAll(p, engine.sr);
+  if (was) engine.play(pos);
+  scheduleSave();
+  renderHeader();
+  render();
 }
 
 async function loadProject(id) {
@@ -242,9 +311,13 @@ async function allChanged() {
   const pos = engine.position();
   if (was) engine.stop();
   engine.updateMix();
-  await ensureAll(app.project, engine.sr, { untilBar: pos + 12 });
-  if (was) engine.play(pos);
-  render();
+  const p0 = app.project;
+  const gen = engine.gen;
+  await ensureAll(p0, engine.sr, { untilBar: pos + 12 });
+  // play again unless Play or Stop was pressed meanwhile; after an undo it plays the restored song
+  if (was && !engine.playing && engine.gen === gen) engine.play(pos);
+  // an undo swapped in another song object meanwhile and has drawn the screens for it
+  if (app.project === p0) render();
 }
 
 function logoTile() { return h('span', { class: 'logo-tile', html: $('.top .logo-tile').innerHTML }); }
@@ -256,7 +329,7 @@ function openMenu() {
     h('button', { class: 'mi', onclick: () => newSong(false) }, 'New song', h('small', {}, 'Festival template: sections, drums, FX and build sweep ready; you write the notes')),
     h('button', { class: 'mi', onclick: () => newSong(true) }, 'Load the demo song', h('small', {}, 'A full intro → build → drop → breakdown → build → drop')),
     h('button', { class: 'mi', onclick: openHelp }, 'How to make a track'),
-    app.desk ? h('button', { class: 'mi', onclick: shortcutsSheet }, 'Keyboard shortcuts', h('small', {}, 'Space play, L loop, F fit, N / D / S / M panels, C coach · press ? any time')) : null,
+    app.desk ? h('button', { class: 'mi', onclick: shortcutsSheet }, 'Keyboard shortcuts', h('small', {}, 'Backspace undo, Esc reset, Space play, L loop, F fit, N / D / S / M panels, C coach · press ? any time')) : null,
     innerWidth >= 900 ? h('button', { class: 'mi', onclick: () => displaySheet(app) }, 'Display size', h('small', {}, `${Math.round(zoomLevel() * 100)}% · bigger text and controls for a big screen seen from a distance`)) : null,
     h('button', { class: 'mi', onclick: openInstall }, onComputer() ? 'Install on this computer' : 'Install on iPhone'),
     h('div', { class: 'about' }, logoTile(), h('div', {}, h('b', {}, 'E-Drop'), h('br'), `by E-Estimating LLC · version ${APP_VERSION}. Songs stay on this device.`)));
@@ -265,11 +338,14 @@ function openMenu() {
 async function newSong(demo) {
   closeSheet();
   await saveNow();
+  let old = null;
   if (demo) {
-    const old = await store.getProject('demo').catch(() => null);
+    old = await store.getProject('demo').catch(() => null);
     if (old && old.edited && !confirm('Reload the demo? Changes you made to it will be replaced.')) return;
   }
-  const p = demo ? demoProject() : templateProject('New song');
+  // the demo again keeps the stored demo's ids (js/undo.js demoLike): nothing re-renders that didn't
+  // change, and Backspace can undo the reload
+  const p = demo ? (old ? demoLike(old) : demoProject()) : templateProject('New song');
   try { await store.saveProject(JSON.parse(JSON.stringify(p))); } catch { /* storage blocked */ }
   openProject(p);
   app.goTab(demo ? 'song' : 'notes');
@@ -287,6 +363,8 @@ async function openProjects() {
       c.id = Math.random().toString(36).slice(2, 10);
       c.name = `${p.name} copy`;
       c.created = c.updated = Date.now();
+      c.original = snapshot(c); // Esc in the copy goes back to the copy as it was made
+      delete c.beforeReset;
       await store.saveProject(c);
       openProjects();
     } }, 'Copy'),
@@ -461,8 +539,12 @@ function wire() {
   // plays, and its own arrow keys (which it handles first) don't move the playhead.
   document.addEventListener('keydown', (e) => {
     const el = e.target;
-    const typing = (el.tagName === 'INPUT' && !/^(range|checkbox|radio|button)$/i.test(el.type)) || /^(select|textarea)$/i.test(el.tagName) || el.isContentEditable;
-    if (typing || e.ctrlKey || e.metaKey || e.defaultPrevented || !app.project) return;
+    const inText = (el.tagName === 'INPUT' && !/^(range|checkbox|radio|button)$/i.test(el.type)) || el.tagName === 'TEXTAREA' || el.isContentEditable;
+    const typing = inText || el.tagName === 'SELECT';
+    if (inText || e.defaultPrevented || !app.project) return;
+    // undo keys work on a focused list box too (it was just used to pick a pattern)
+    if (undoKey(e)) { e.preventDefault(); return; }
+    if (typing || e.ctrlKey || e.metaKey) return;
     // a held Space would start and stop at the key-repeat rate
     if (e.code === 'Space' || e.key === ' ') { e.preventDefault(); if (!e.repeat) togglePlay(); return; }
     if (!e.altKey && /^(Digit|Numpad)[123]$/.test(e.code)) { setStepLevel(+e.code.slice(-1)); return; }
@@ -475,6 +557,34 @@ function wire() {
   $('#menuBtn').innerHTML = ICON.more;
   $('#coachBtn').innerHTML = ICON.coach;
   $('#stepSlot').append(stepLevelControl({ compact: true }));
+}
+
+// Backspace undoes the last change, Shift+Backspace (Ctrl+Y, Ctrl+Shift+Z) redoes, Ctrl+Z undoes,
+// Esc resets the song to its original (js/undo.js). Not while a sheet is open: there Esc closes it.
+// Holding Backspace keeps undoing, a step every 140 ms.
+let undoKeyAt = 0;
+function undoKey(e) {
+  if (e.altKey || !app.history) return false;
+  const k = e.key;
+  if (sheetOpen()) {
+    // this Esc closes the sheet (desktop.js deskKey); a quick second one is the same habit, not a reset
+    if (k === 'Escape') app.escClosedAt = performance.now();
+    return false;
+  }
+  const mod = e.ctrlKey || e.metaKey;
+  let act = null;
+  if (k === 'Backspace' && !mod) act = e.shiftKey ? 'redo' : 'undo';
+  else if (mod && (k === 'z' || k === 'Z')) act = e.shiftKey ? 'redo' : 'undo';
+  else if (mod && (k === 'y' || k === 'Y') && !e.shiftKey) act = 'redo';
+  else if (k === 'Escape' && !mod && !e.shiftKey) act = 'reset';
+  if (!act) return false;
+  // mid-drag (a note held in the piano roll, a slider being dragged) the song stays put
+  if (app.history.busy) return true;
+  if (act === 'reset' && (e.repeat || performance.now() - (app.escClosedAt || 0) < 1000)) return true;
+  if (e.repeat && performance.now() - undoKeyAt < 140) return true;
+  undoKeyAt = performance.now();
+  app.history[act]();
+  return true;
 }
 
 // Animation: clock, playheads, meters.
@@ -552,6 +662,7 @@ async function boot() {
   if (hashTab) app.ui.tab = hashTab[1];
   initDesk(app, { icons: ICON });
   app.on('render', () => { lastStep = -2; }); // the drum grid was rebuilt: re-mark the playing step
+  initUndo(app, { swap: swapProject });
   initCoach(app);
   store.askPersistent();
   let ok = false;

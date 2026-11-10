@@ -1396,7 +1396,8 @@ export function fxTimeline(app, t, pat) {
       const i = pat.fx.findIndex((e, k) => { const L = lane(A, k); return pt.y >= L.y && pt.y < L.y + L.h && pt.x >= X(A, e.s) - 4 && pt.x <= X(A, e.s + e.len) + 4; });
       if (i < 0) return null;
       const e = pat.fx[i];
-      if (e.vel == null) e.vel = 1;
+      // a tap only listens: it must not write into the song (an unannounced change would become a
+      // stray undo step), so a missing vel stays missing and reads as 1
       let mode = null;
       return {
         keys: [`fx.${i}.s`, `fx.${i}.vel`], hid: `fx.${i}.body`, kind: i,
@@ -1404,7 +1405,7 @@ export function fxTimeline(app, t, pat) {
           // the first real movement picks the axis: sideways moves it, up and down sets its level
           if (!mode) mode = Math.abs(q.dx) >= Math.abs(q.dy) ? 'move' : 'level';
           if (mode === 'move') e.s = snapS(d.start[`fx.${i}.s`] + (q.dx / A.W) * steps());
-          else e.vel = clamp(snap(d.start[`fx.${i}.vel`] - q.dy / (lane(A, i).h + 40), 0.01), 0, 1);
+          else e.vel = clamp(snap((d.start[`fx.${i}.vel`] ?? 1) - q.dy / (lane(A, i).h + 40), 0.01), 0, 1);
         },
         up: (q, d) => { if (!d.moved) app.previewFx(e); return false; },
       };

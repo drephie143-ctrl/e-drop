@@ -304,6 +304,9 @@ export function displaySheet(app) {
 // --- keyboard ------------------------------------------------------------------------------------
 // keys: each entry is a key cap, '+' joins a modifier, '/' separates alternatives
 const SHORTCUTS = [
+  [['Backspace'], 'Undo the last change (press again for the one before)'],
+  [['Shift', '+', 'Backspace'], 'Redo (Ctrl+Y too; Ctrl+Z also undoes)'],
+  [['Esc'], 'Reset the song to the original (Backspace brings your changes back)'],
   [['Space'], 'Play / stop'],
   [['L'], 'Loop the selected section on / off'],
   [['Home'], 'Back to the start of the section'],
@@ -318,7 +321,7 @@ const SHORTCUTS = [
   [['Ctrl', '+', 'wheel'], 'Zoom the piano roll or the song timeline'],
   [['Shift', '+', 'wheel'], 'Scroll sideways'],
   [['Alt', '+', 'wheel'], 'Piano roll row height'],
-  [['Esc'], 'Close a sheet'],
+  [['Esc'], 'With a sheet, a definition or a Show me ring up: close it first'],
   [['?'], 'This list'],
 ];
 
@@ -326,7 +329,7 @@ export function shortcutsSheet() {
   openSheet('Keyboard shortcuts',
     h('div', { class: 'keys-list' }, SHORTCUTS.map(([keys, what]) => h('div', { class: 'keys-row' },
       h('span', { class: 'keys-k' }, keys.map((x) => (x === '+' || x === '/' ? h('span', {}, x) : h('kbd', {}, x)))), h('span', {}, what)))),
-    h('p', { class: 'hint' }, 'Shortcuts are off while you type in a box or hold Ctrl. Arrow keys on a focused slider move it by the step size.'));
+    h('p', { class: 'hint' }, 'Shortcuts are off while you type in a box, and the others while you hold Ctrl. Arrow keys on a focused slider move it by the step size. Undo remembers up to 200 changes per song until the page is reloaded; the original is kept with the song.'));
 }
 
 // Returns true when the key was handled. Space and 1/2/3 are handled in main.js.

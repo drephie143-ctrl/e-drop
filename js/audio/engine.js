@@ -283,6 +283,7 @@ export class Engine {
     this.pos = 0; // bars
     this.loop = null; // { from, to } in bars, or null for the whole song
     this.sources = new Set();
+    this.gen = 0; // bumped by every play and stop: a play still waiting on renders checks it
     this.onEnded = null;
     this.lufs = { hist: [], m: -70, s: -70, peak: 0 };
   }
@@ -321,8 +322,10 @@ export class Engine {
     if (!this.loop && fromBar >= total - 0.01) fromBar = 0;
     if (this.loop && (fromBar < this.loop.from || fromBar >= this.loop.to)) fromBar = this.loop.from;
     this.playing = true;
+    const gen = ++this.gen;
     await ensureAll(p, this.sr, { untilBar: fromBar + 12 });
-    if (!this.playing) return;
+    // stopped, or a newer play (an undo while this one waited) took over: two would play at once
+    if (!this.playing || gen !== this.gen) return;
     const ctx = this.ctx;
     this.clips = songClips(p);
     this.segs = [];
@@ -390,7 +393,9 @@ export class Engine {
     if (!this.playing) return;
     this.pos = Math.max(0, this.position());
     this.playing = false;
+    this.gen++;
     clearInterval(this.timer);
+    this.late = [];
     const now = this.ctx.currentTime;
     for (const s of this.sources) { try { s.stop(now + 0.02); } catch { /* not started */ } }
     this.sources.clear();
