@@ -35,6 +35,8 @@ export function renderSong(app, root, again = false) {
   for (let b = 0; b < total; b += every) ticks.push(h('span', { class: desk && b % 4 === 0 ? 'q' : null, style: { left: LABEL + b * bpx + 'px' } }, String(b + 1)));
   const pos = app.engine.position();
   if (desk) ticks.push(h('div', { class: 'tl-ph-cap', style: { left: LABEL + pos * bpx + 'px' } }));
+  // what P previews: the bars (bright) and the seconds around them (soft); js/preview.js places it
+  ticks.unshift(h('div', { class: 'tl-pv', hidden: true, 'aria-hidden': 'true' }, h('i')));
   const ruler = row('tl-ruler', 'bar', ticks, {
     onclick: (e) => {
       const el = e.currentTarget;
@@ -120,6 +122,7 @@ export function renderSong(app, root, again = false) {
       tl,
       secCard,
       h('p', { class: 'hint', style: { marginTop: '10px' } }, 'Tap a cell to pick the pattern a track plays in that section. On a lane, tap to add a point, drag to move it, tap a point to remove it.'));
+    if (app.previewer) app.previewer.paint(); // the preview band on the new ruler
     return;
   }
 
@@ -142,6 +145,8 @@ export function renderSong(app, root, again = false) {
     h('p', { class: 'hint' }, 'Click a cell to choose its pattern, a track name to edit that track. Lanes: click to add a point, drag to move it, click a point to remove it.'))));
   tl.scrollLeft = fit ? 0 : ui.tlScroll || 0;
   tl.scrollTop = ui.tlScrollY || 0;
+  // the preview band on the new ruler (zoom, Fit and resizes draw the timeline without a render)
+  if (app.previewer) app.previewer.paint();
   // the first fit guessed the width: measure it and lay out again once
   if (fit && !again) {
     const aw = tl.clientWidth;

@@ -5,8 +5,219 @@ import { newPattern, newTrack, uid } from '../music/project.js';
 import { VOICES, KICKS, PATTERN_PRESETS, snareRoll, kickHz } from '../audio/drums.js';
 import { FX_TYPES } from '../audio/fx.js';
 import { kitEditor, kickGraph, levelsGraph, auditionChip, split, fxTimeline } from './graphs-sound.js';
+import { copyBars, pasteBars, clearBars, repeatBars, fillBars, barsHave, kindOf, barSelOf, barsName, MAX_BARS } from '../music/bars.js';
 
 export const MELODIC = new Set(['lead', 'pluck', 'pad', 'stab', 'bass', 'sub']);
+
+// --- bars: pick whole bars of the pattern, then Repeat, Fill, Copy, Paste or Clear them ----------
+// app.ui.bars = { track, pat, from, to, anchor, at } is the selection (bars [from, to) of that
+// pattern); app.barClip is the bars copied, kept when you switch tracks or songs.
+const cap = (s) => s[0].toUpperCase() + s.slice(1);
+export const selOf = (app, t, pat) => barSelOf(app.ui.bars, t, pat);
+export function selectBars(app, t, pat, from, to, anchor = from) {
+  app.ui.bars = { track: t.id, pat: pat.id, from, to, anchor, at: performance.now() };
+}
+
+// The track and pattern in the editor on screen (the phone: the Notes or Drums tab), or null.
+export function editorPart(app) {
+  const p = app.project;
+  const ui = app.ui;
+  const t = p && p.tracks.find((x) => x.id === ui.track);
+  if (!t) return null;
+  const drums = t.role === 'drums';
+  const on = app.desk ? (ui.editor === 'drums') === drums : (ui.tab === 'drums' && drums) || (ui.tab === 'notes' && !drums);
+  return on ? { t, pat: curPattern(app, t) } : null;
+}
+
+const KIND_NAME = { notes: 'notes', hits: 'drum hits', fx: 'effects' };
+const KIND_HOME = { notes: 'a synth track', hits: 'a drum pattern', fx: 'the FX track' };
+
+// The bar actions for one pattern, shared by the bar strip and the keys (main.js: Ctrl+D, Ctrl+C,
+// Ctrl+V, Delete). Each returns true when it did something or said why not.
+export function barOps(app, t, pat) {
+  const kind = kindOf(t.role);
+  const sel = () => selOf(app, t, pat);
+  const need = () => { toast('Select bars first: tap a bar number above the grid'); return true; };
+  // the drum grid shows that bar (renderDrums turns it into a page once it knows the new width)
+  const show = (b) => { if (t.role === 'drums') app.ui.drumShowBar = b; };
+  // The pattern changed: re-render it. A longer pattern moves the clips in the song; while it plays,
+  // start again in place (a preview stays a preview), or the part already sounding runs out at
+  // its old length and the new bars stay silent until the next pass.
+  const done = (grew) => {
+    const E = app.engine;
+    if (grew && E.playing) {
+      const range = E.range;
+      E.stop({ keep: true });
+      E.play(E.pos, { range });
+    } else if (grew) E.refresh();
+    app.patternEdited(t, pat, true);
+    app.emit('bars');
+  };
+  const longer = (r) => (r.grew ? ` · pattern ${pat.name} is now ${pat.bars} bars` : '') + (r.cut ? ` (a pattern goes up to ${MAX_BARS} bars)` : '');
+  return {
+    repeat() {
+      const s = sel();
+      if (!s) return need();
+      const r = repeatBars(pat, s.from, s.to, kind);
+      if (r.to <= r.from) { toast(`A pattern goes up to ${MAX_BARS} bars`); return true; }
+      selectBars(app, t, pat, r.from, r.to);
+      show(r.from);
+      done(r.grew);
+      toast(`Repeated ${barsName(s.from, s.to)} into ${barsName(r.from, r.to)}${longer(r)}`);
+      return true;
+    },
+    fill() {
+      const s = sel();
+      if (!s) return need();
+      const r = fillBars(pat, s.from, s.to, kind);
+      if (!r) { toast(`Nothing after ${barsName(s.from, s.to)} to fill. Repeat adds bars.`); return true; }
+      done(false);
+      toast(`${cap(barsName(s.from, s.to))} repeated through bar ${pat.bars}`);
+      return true;
+    },
+    copy() {
+      const s = sel();
+      if (!s) return need();
+      app.barClip = { ...copyBars(pat, s.from, s.to, kind), what: `${t.name} ${barsName(s.from, s.to)}` };
+      app.emit('bars');
+      app.render();
+      toast(`Copied ${app.barClip.what}. Select the bar it goes to, then Paste.`);
+      return true;
+    },
+    paste() {
+      const c = app.barClip;
+      if (!c) { toast('Copy some bars first'); return true; }
+      if (c.kind !== kind) { toast(`Those are ${KIND_NAME[c.kind]}: paste them into ${KIND_HOME[c.kind]}`); return true; }
+      const s = sel();
+      if (!s) return need();
+      const r = pasteBars(pat, c, s.from);
+      if (r.to <= r.from) { toast(`A pattern goes up to ${MAX_BARS} bars`); return true; }
+      selectBars(app, t, pat, r.from, r.to);
+      show(r.from);
+      done(r.grew);
+      toast(`Pasted ${c.what} at bar ${s.from + 1}${longer(r)}`);
+      return true;
+    },
+    clear() {
+      const s = sel();
+      if (!s) return need();
+      if (!barsHave(pat, s.from, s.to, kind, { ringing: true })) { toast(`${cap(barsName(s.from, s.to))} is already empty`); return true; }
+      clearBars(pat, s.from, s.to, kind);
+      done(false);
+      toast(`Cleared ${barsName(s.from, s.to)}`);
+      return true;
+    },
+    all() {
+      selectBars(app, t, pat, 0, pat.bars);
+      app.emit('bars');
+      app.render();
+      return true;
+    },
+  };
+}
+
+// The strip above the editor: a button per bar (tap one, drag across several, Shift-click to
+// extend, tap the only selected bar again to let go), the actions, and Preview.
+function barStrip(app, t, pat) {
+  const s = selOf(app, t, pat);
+  const ops = barOps(app, t, pat);
+  const drums = t.role === 'drums';
+  const span = Math.max(1, app.ui.drumSpan || 1);
+  const page = app.ui.drumPage || 0;
+  const kind = kindOf(t.role);
+  const clip = app.barClip;
+  const lbl = h('span', { class: 'bars-lbl' });
+  const nums = h('div', { class: 'bnums', role: 'group', 'aria-label': 'Select bars' },
+    Array.from({ length: pat.bars }, (_, b) => h('button', {
+      class: 'bnum' + (drums && Math.floor(b / span) === page ? ' shown' : ''), 'data-bar': b,
+      title: `Bar ${b + 1}: tap to select, drag across bars or Shift-click for several${drums ? '. Shows it in the grid.' : ''}`,
+    }, String(b + 1))));
+  const mark = () => {
+    const x = selOf(app, t, pat);
+    for (const el of nums.children) {
+      const k = +el.dataset.bar;
+      const on = !!x && k >= x.from && k < x.to;
+      el.classList.toggle('on', on);
+      el.setAttribute('aria-pressed', String(on));
+    }
+    lbl.textContent = x ? cap(barsName(x.from, x.to)) : 'Bars';
+  };
+  mark();
+  // while the pointer moves only the marks change; the screens draw again when it lets go
+  const live = () => { mark(); if (!drums && app.roll.el.isConnected) app.roll.draw(); app.emit('bars'); };
+  const finish = () => {
+    const x = selOf(app, t, pat);
+    if (drums && x && Math.floor(x.from / span) !== page) app.ui.drumPage = Math.floor(x.from / span);
+    app.emit('bars');
+    app.render();
+  };
+  // on the drums, tapping the selected bar while another page shows brings it into view (it stays selected)
+  pickBars(app, t, pat, nums, (b) => +b.dataset.bar, '.bnum', live, finish, { keep: (b) => drums && Math.floor(b / span) !== page });
+  const act = (label, title, fn, on, cls = '') => h('button', { class: 'chip ' + cls, title, disabled: !on, onclick: fn }, label);
+  const P = app.previewer;
+  // one row that wraps where it must: the numbers, then the actions, then Preview
+  return h('div', { class: 'bars-strip', role: 'toolbar', 'aria-label': 'Bars' }, lbl, nums,
+    h('button', { class: 'chip', title: 'Select every bar of the pattern', onclick: ops.all }, 'All'),
+    act('Repeat', 'Copy the selected bars right after them; again for one more copy (Ctrl+D)', ops.repeat, !!s, 'bars-gap'),
+    act('Fill', 'Repeat the selected bars to the end of the pattern', ops.fill, !!s && s.to < pat.bars),
+    act('Copy', 'Copy the selected bars (Ctrl+C)', ops.copy, !!s),
+    act('Paste', clip ? `Paste ${clip.what} at the selected bar (Ctrl+V)` : 'Copy some bars first', ops.paste, !!s && !!clip && clip.kind === kind),
+    act('Clear', 'Empty the selected bars (Delete)', ops.clear, !!s),
+    P ? h('button', { class: 'chip pv bars-gap', title: 'Hear it in the song, from a few seconds before to a few seconds after (P)', onclick: () => P.play() }, '▶ Preview') : null,
+    P ? h('button', { class: 'chip', title: 'How much to play before and after', 'aria-label': `Preview settings: ${P.prefs.pre} s before, ${P.prefs.post} s after`, onclick: () => P.sheet() }, `${P.prefs.pre} s · ${P.prefs.post} s`) : null);
+}
+
+// Bar picking on a set of elements (the strip's numbers, the drum grid's bar labels): press one
+// to select it, drag across others to extend, Shift extends from the first one, and a tap on the
+// only selected bar lets it go (unless keep(bar) says to keep it). `barOf(el)` reads an element's bar.
+export function pickBars(app, t, pat, box, barOf, sel, live, finish, { keep = () => false } = {}) {
+  let drag = null;
+  const at = (e) => {
+    const el = document.elementFromPoint(e.clientX, e.clientY);
+    const b = el && el.closest && el.closest(sel);
+    return b && box.contains(b) ? barOf(b) : null;
+  };
+  const set = (anchor, b) => selectBars(app, t, pat, Math.min(anchor, b), Math.max(anchor, b) + 1, anchor);
+  box.addEventListener('pointerdown', (e) => {
+    const b = at(e);
+    if (b == null || e.button) return;
+    e.preventDefault();
+    const s = selOf(app, t, pat);
+    const anchor = e.shiftKey && s ? app.ui.bars.anchor ?? s.from : b;
+    drag = { anchor, last: b, moved: false, was: !e.shiftKey && !!s && s.from === b && s.to === b + 1 };
+    try { box.setPointerCapture(e.pointerId); } catch { /* fine */ }
+    set(anchor, b);
+    live();
+  });
+  box.addEventListener('pointermove', (e) => {
+    if (!drag) return;
+    const b = at(e);
+    if (b == null || b === drag.last) return;
+    drag.last = b;
+    drag.moved = true;
+    set(drag.anchor, b);
+    live();
+  });
+  const end = () => {
+    if (!drag) return;
+    const d = drag;
+    drag = null;
+    if (d.was && !d.moved && !keep(d.last)) app.ui.bars = null;
+    finish();
+  };
+  box.addEventListener('pointerup', end);
+  box.addEventListener('pointercancel', end);
+  // Enter or Space on a focused bar button
+  box.addEventListener('click', (e) => {
+    if (e.detail !== 0) return;
+    const el = e.target.closest && e.target.closest(sel);
+    if (!el) return;
+    const b = barOf(el);
+    const s = selOf(app, t, pat);
+    if (s && s.from === b && s.to === b + 1) { if (!keep(b)) app.ui.bars = null; } else selectBars(app, t, pat, b, b + 1);
+    finish();
+  });
+}
 
 export function trackChips(app, filter, onPick) {
   const p = app.project;
@@ -75,7 +286,7 @@ export function renderNotes(app, root) {
   app.ui.track = t.id;
   const chips = trackChips(app, (x) => MELODIC.has(x.role) || x.role === 'fx', (x) => { app.ui.track = x.id; app.render(); });
   const pat = curPattern(app, t);
-  if (t.role === 'fx') { root.replaceChildren(chips, patternBar(app, t, pat), fxEditor(app, t, pat)); return; }
+  if (t.role === 'fx') { root.replaceChildren(chips, patternBar(app, t, pat), barStrip(app, t, pat), fxEditor(app, t, pat)); return; }
   const ui = app.ui;
   const s = t.synth;
   const tools = h('div', { class: 'row tools' },
@@ -83,8 +294,8 @@ export function renderNotes(app, root) {
     h('button', { class: 'chip on-accent', onclick: () => chordSheet(app, t, pat) }, 'Chords & parts'),
     chip('Arp', s.arp.on, (v) => { s.arp.on = v; app.soundChanged(t); app.render(); toast(v ? `Arpeggiator on: ${s.arp.mode}, ${s.arp.rate}. Settings in Sound.` : 'Arpeggiator off'); }),
     chip('Ghosts', ui.ghosts, (v) => { ui.ghosts = v; app.render(); }));
-  root.replaceChildren(chips, patternBar(app, t, pat), tools, app.roll.el,
-    h('p', { class: 'hint', style: { marginTop: '8px' } }, 'Tap to add a note · tap a note to delete · drag a note to move · drag its right end to resize · drag empty space to scroll. Tap the keys to hear them.'));
+  root.replaceChildren(chips, patternBar(app, t, pat), tools, barStrip(app, t, pat), app.roll.el,
+    h('p', { class: 'hint', style: { marginTop: '8px' } }, 'Tap to add a note · tap a note to delete · drag a note to move · drag its right end to resize · drag empty space to scroll. Tap the keys to hear them. Tap a bar number (or the ruler) to select bars.'));
   app.roll.set(t, pat, ui.ghosts ? ghostNotes(app, t) : []);
 }
 
@@ -196,18 +407,24 @@ export function renderDrums(app, root) {
   const was = ui.drumSpan || 1;
   if (was !== span) ui.drumPage = Math.floor(((ui.drumPage || 0) * was) / span);
   ui.drumSpan = span;
+  // a bar to bring into view (Repeat or Paste, which may also have changed the length and span)
+  if (ui.drumShowBar != null) { ui.drumPage = Math.floor(ui.drumShowBar / span); ui.drumShowBar = null; }
   const pages = Math.ceil(pat.bars / span);
   ui.drumPage = Math.max(0, Math.min(ui.drumPage || 0, pages - 1));
   const page = ui.drumPage;
   const first = page * span * 16;
   const drums = p.tracks.filter((x) => x.role === 'drums');
+  const bsel = selOf(app, t, pat);
   const step = (v, i) => {
     const s = first + i;
+    // the last page of a length the span doesn't divide: the bars past the end are blank
+    if (s >= pat.bars * 16) return h('span', { class: 'step void', 'aria-hidden': 'true' });
     const hs = pat.hits.filter((x) => x.v === v.id && x.s >= s && x.s < s + 1);
     const roll = hs.length > 1 || hs.some((x) => x.s % 1);
     const vel = hs.reduce((a, x) => Math.max(a, x.vel), 0);
+    const inSel = bsel && s >= bsel.from * 16 && s < bsel.to * 16;
     return h('button', {
-      class: 'step' + (hs.length ? ' on' : '') + (roll ? ' roll' : '') + (i % 4 === 0 ? ' beat' : ''), 'data-step': i,
+      class: 'step' + (hs.length ? ' on' : '') + (roll ? ' roll' : '') + (i % 4 === 0 ? ' beat' : '') + (inSel ? ' bsel' : ''), 'data-step': i,
       style: hs.length ? { opacity: String(0.45 + 0.55 * vel) } : null,
       'aria-label': `${v.name} step ${s + 1}`,
       onclick: () => {
@@ -221,19 +438,41 @@ export function renderDrums(app, root) {
   const cells = (v) => (span === 1
     ? h('div', { class: 'dcells' }, Array.from({ length: 16 }, (_, i) => step(v, i)))
     : h('div', { class: 'dcells multi' }, Array.from({ length: span }, (_, b) => h('div', { class: 'dbar' }, Array.from({ length: 16 }, (_, i) => step(v, b * 16 + i))))));
+  // several bars side by side: each one's label above it selects it, like the strip's numbers
+  let ruler = null;
+  if (span > 1) {
+    const lbls = h('div', { class: 'dcells multi' }, Array.from({ length: span }, (_, b) => {
+      const k = page * span + b;
+      if (k >= pat.bars) return h('span', { class: 'dbar-lbl void' });
+      const on = bsel && k >= bsel.from && k < bsel.to;
+      return h('button', { class: 'dbar-lbl' + (on ? ' on' : ''), 'data-bar': k, title: `Select bar ${k + 1} (drag or Shift-click for several)` }, `Bar ${k + 1}`);
+    }));
+    pickBars(app, t, pat, lbls, (el) => +el.dataset.bar, '.dbar-lbl[data-bar]', () => {
+      const x = selOf(app, t, pat);
+      for (const el of lbls.children) el.classList.toggle('on', !!x && +el.dataset.bar >= x.from && +el.dataset.bar < x.to);
+      app.emit('bars');
+    }, () => { app.emit('bars'); app.render(); });
+    ruler = h('div', { class: 'drow druler' }, h('span', { class: 'dname' }), lbls);
+  }
   const grid = h('div', { class: 'dgrid' + (span > 1 ? ' wide' : '') },
-    span > 1 ? h('div', { class: 'drow druler', 'aria-hidden': 'true' }, h('span', { class: 'dname' }),
-      h('div', { class: 'dcells multi' }, Array.from({ length: span }, (_, b) => h('div', { class: 'dbar-lbl' }, `Bar ${page * span + b + 1}`)))) : null,
+    ruler,
     VOICES.map((v) => h('div', { class: 'drow' },
       h('button', { class: 'dname', onclick: () => app.preview(t, v.id) }, v.name),
       cells(v))));
-  const pageLabel = (k) => (span === 1 ? `Bar ${k + 1}` : `Bars ${k * span + 1}–${Math.min(pat.bars, (k + 1) * span)}`);
   const kitCard = drumKitCard(app, t);
   watchDrumWidth(app, root);
+  // the pages of a long beat: ‹ › only move the view; the strip's numbers select (and show) a bar
+  const go = (k) => { ui.drumPage = k; app.render(); };
+  const pager = pages > 1 ? h('div', { class: 'dpager' },
+    h('button', { 'aria-label': 'Previous bars', title: 'Previous bars', disabled: page === 0, onclick: () => go(page - 1) }, '‹'),
+    h('b', {}, page * span + 1 >= Math.min(pat.bars, (page + 1) * span) ? `Bar ${page * span + 1} of ${pat.bars}` : `Bars ${page * span + 1}–${Math.min(pat.bars, (page + 1) * span)} of ${pat.bars}`),
+    h('button', { 'aria-label': 'Next bars', title: 'Next bars', disabled: page >= pages - 1, onclick: () => go(page + 1) }, '›')) : null;
   root.replaceChildren(
     drums.length > 1 ? trackChips(app, (x) => x.role === 'drums', (x) => { app.ui.track = x.id; app.render(); }) : '',
     patternBar(app, t, pat),
-    pages > 1 ? seg(Array.from({ length: pages }, (_, i) => [i, pageLabel(i)]), page, (v) => { ui.drumPage = v; app.render(); }, 'mini wrap dpages') : '',
+    // the strip's numbers underline the bars on screen
+    barStrip(app, t, pat),
+    pager,
     grid,
     h('div', { class: 'chips', style: { marginTop: '12px' } },
       PATTERN_PRESETS.map((pr) => h('button', { class: 'chip', onclick: () => {
@@ -248,8 +487,9 @@ export function renderDrums(app, root) {
     kitCard);
 }
 
-// How many bars of the drum grid fit side by side at 26 px or more per step: the largest
-// divisor of the pattern length that fits (so every page is whole), 1 on a phone.
+// How many bars of the drum grid fit side by side at 26 px or more per step, 1 on a phone: the
+// largest divisor of the pattern length that fits (so every page is whole), unless that is under
+// half what fits (a 5-bar beat, made by Repeat): then as many as fit, the last page partly blank.
 const DRUM_STEP_MIN = 26;
 function drumSpanFor(root, bars) {
   const w = root.clientWidth;
@@ -258,9 +498,10 @@ function drumSpanFor(root, bars) {
   const inner = w - (parseFloat(cs.paddingLeft) || 0) - (parseFloat(cs.paddingRight) || 0);
   const perBar = 16 * DRUM_STEP_MIN + 15 * 2 + 10; // steps, the 2 px gaps, the gap between bars
   const fit = Math.max(1, Math.floor((inner - 80 + 10) / perBar)); // 80: the voice names column
+  const cap = Math.min(fit, bars);
   let span = 1;
-  for (let d = 2; d <= Math.min(fit, bars); d++) if (bars % d === 0) span = d;
-  return span;
+  for (let d = 2; d <= cap; d++) if (bars % d === 0) span = d;
+  return span * 2 < cap ? cap : span;
 }
 
 // Re-lay the grid when the Drums panel changes width (desktop window or panel resize).

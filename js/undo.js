@@ -128,11 +128,16 @@ export function initUndo(app, { swap }) {
     if (!H.p) return false;
     const now = snapshot(H.p);
     if (now === H.base) return false;
-    push(H.list.undo, H.base);
+    const before = H.base;
+    push(H.list.undo, before);
     H.list.redo.length = 0;
     setBase(now);
+    step(before, now);
     return true;
   }
+  // 'step' tells add-ons (js/preview.js: where the edits are) what one change did: the song
+  // before and after it, as snapshots. Undo and redo are changes too (`how` says which).
+  const step = (before, after, how = 'edit') => { if (before != null && after != null) app.emit('step', { before, after, how }); };
   const arm = (ms) => {
     clearTimeout(H.timer);
     H.timer = setTimeout(() => { H.timer = 0; if (!H.down.size) commit(); }, ms);
@@ -189,12 +194,14 @@ export function initUndo(app, { swap }) {
     settle();
     const L = H.list;
     if (!L || !L.undo.length) { toast(L && L.redo.length ? 'Nothing more to undo (Shift+Backspace redoes)' : 'Nothing to undo'); return false; }
-    const step = L.undo.pop();
-    const d = step.k === 'reset' ? { what: 'the reset: your changes are back' } : describe(step.s, H.base);
-    push(L.redo, H.base, step.k);
-    app.undoFocus = step.k === 'reset' ? null : { track: d.track, pat: d.pat };
-    apply(step.s);
-    if (step.k === 'reset') delete app.project.beforeReset; // the reset is undone: nothing to bring back
+    const s = L.undo.pop();
+    const was = H.base;
+    const d = s.k === 'reset' ? { what: 'the reset: your changes are back' } : describe(s.s, H.base);
+    push(L.redo, H.base, s.k);
+    app.undoFocus = s.k === 'reset' ? null : { track: d.track, pat: d.pat };
+    apply(s.s);
+    if (s.k === 'reset') delete app.project.beforeReset; // the reset is undone: nothing to bring back
+    step(was, H.base, s.k === 'reset' ? 'reset' : 'undo');
     const n = L.undo.length;
     toast(`Undid ${d.what}${n ? ` · ${n} more to undo` : ' · back to the start of the history'}`);
     return true;
@@ -204,13 +211,14 @@ export function initUndo(app, { swap }) {
     settle();
     const L = H.list;
     if (!L || !L.redo.length) { toast('Nothing to redo'); return false; }
-    const step = L.redo.pop();
+    const s = L.redo.pop();
     const before = H.base;
-    const d = step.k === 'reset' ? { what: 'the reset to the original' } : describe(H.base, step.s);
-    push(L.undo, H.base, step.k);
-    app.undoFocus = step.k === 'reset' ? null : { track: d.track, pat: d.pat };
-    apply(step.s);
-    if (step.k === 'reset') app.project.beforeReset = before;
+    const d = s.k === 'reset' ? { what: 'the reset to the original' } : describe(H.base, s.s);
+    push(L.undo, H.base, s.k);
+    app.undoFocus = s.k === 'reset' ? null : { track: d.track, pat: d.pat };
+    apply(s.s);
+    if (s.k === 'reset') app.project.beforeReset = before;
+    step(before, H.base, s.k === 'reset' ? 'reset' : 'redo');
     toast(`Redid ${d.what}${L.redo.length ? ` · ${L.redo.length} more to redo` : ''}`);
     return true;
   }
@@ -228,6 +236,7 @@ export function initUndo(app, { swap }) {
     apply(p.original);
     // saved with the song (the save apply scheduled writes it), so a reload can't lose the way back
     app.project.beforeReset = before;
+    step(before, H.base, 'reset');
     toast(`Reset ${p.id === 'demo' ? 'the demo' : 'the song'} to the original · Backspace brings your changes back`);
     return true;
   }

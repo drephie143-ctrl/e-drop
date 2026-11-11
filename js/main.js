@@ -7,17 +7,18 @@ import { templateProject, normalize } from './music/project.js';
 import { demoProject } from './music/demo.js';
 import { PianoRoll } from './ui/roll.js';
 import { renderSong } from './ui/song.js';
-import { renderNotes, renderDrums, curPattern } from './ui/screens.js';
+import { renderNotes, renderDrums, curPattern, selectBars, barOps, editorPart, selOf } from './ui/screens.js';
 import { renderSound } from './ui/sound.js';
 import { renderMix } from './ui/mix.js';
 import { h, $, $$, openSheet, closeSheet, sheetOpen, toast, seg, field, chip, slider, stepLevelControl, setStepLevel } from './ui/dom.js';
 import { initDesk, renderDesk, deskGoTab, deskKey, visible, updateMeter, displaySheet, shortcutsSheet, zoomLevel } from './ui/desktop.js';
 import { initCoach } from './coach/coach.js';
 import { initUndo, ensureOriginal, snapshot, demoLike } from './undo.js';
+import { initPreview } from './preview.js';
 import { runDsp } from './dsp/client.js';
 import * as store from './store.js';
 
-export const APP_VERSION = 3;
+export const APP_VERSION = 4;
 const engine = new Engine();
 const ctx = engine.ctx;
 const settings = loadSettings();
@@ -31,6 +32,7 @@ const ICON = {
   play: '<svg viewBox="0 0 24 24"><path d="M8 5.5v13l10.5-6.5z" fill="currentColor"/></svg>',
   stop: '<svg viewBox="0 0 24 24"><rect x="6.5" y="6.5" width="11" height="11" rx="2" fill="currentColor"/></svg>',
   home: '<svg viewBox="0 0 24 24"><path d="M6 6h2.2v12H6zM19 6v12l-9-6z" fill="currentColor"/></svg>',
+  preview: '<svg viewBox="0 0 24 24"><path d="M6.5 5H3.5v14h3M17.5 5h3v14h-3" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/><path d="M9.5 8.2v7.6l6.3-3.8z" fill="currentColor"/></svg>',
   loop: '<svg viewBox="0 0 24 24"><path d="M17 4l3 3-3 3M20 7H8a4 4 0 0 0-4 4v1M7 20l-3-3 3-3M4 17h12a4 4 0 0 0 4-4v-1" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>',
   coach: '<svg viewBox="0 0 24 24"><path d="M12 4 2.5 9 12 14l9.5-5z" fill="currentColor"/><path d="M6.5 11.3v4.2c0 1.6 2.5 3 5.5 3s5.5-1.4 5.5-3v-4.2" fill="none" stroke="currentColor" stroke-width="1.7"/><path d="M20.5 9.5v5" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></svg>',
   more: '<svg viewBox="0 0 24 24"><circle cx="5.5" cy="12" r="1.8" fill="currentColor"/><circle cx="12" cy="12" r="1.8" fill="currentColor"/><circle cx="18.5" cy="12" r="1.8" fill="currentColor"/></svg>',
@@ -89,6 +91,10 @@ const app = {
     render();
   },
   preview(t, pitch, dur) { unlock(); engine.preview(t, pitch, dur); },
+  // bar selection in the editors (js/ui/screens.js): the piano roll's ruler picks bars too.
+  // final: the pointer let go, so every screen draws it; else only the roll and the preview band.
+  selectBars(t, pat, from, to, anchor) { selectBars(app, t, pat, from, to, anchor); },
+  barsChanged(final) { app.emit('bars'); if (final) render(); },
   previewFx(e) {
     unlock();
     const t = app.project.tracks.find((x) => x.role === 'fx');
@@ -157,6 +163,7 @@ function openProject(p) {
   app.project = p;
   app.ui.track = (p.tracks.find((t) => t.role === 'lead') || p.tracks[0] || {}).id;
   app.ui.pat = {};
+  app.ui.bars = null;
   app.ui.section = 0;
   app.ui.tlScroll = 0;
   engine.setProject(p);
@@ -181,7 +188,8 @@ function swapProject(json) {
   p.updated = old.updated;
   const was = engine.playing;
   const pos = engine.position();
-  if (was) engine.stop();
+  const range = engine.range; // a preview plays on to its end
+  if (was) engine.stop({ keep: true });
   // renders queued for the song being replaced must not land after it
   cancelRenderTimers();
   app.project = p;
@@ -218,7 +226,7 @@ function swapProject(json) {
     if (t) { R.track = t; R.pat = t.patterns.find((q) => q.id === R.pat.id); }
   }
   ensureAll(p, engine.sr);
-  if (was) engine.play(pos);
+  if (was) engine.play(pos, { range });
   scheduleSave();
   renderHeader();
   render();
@@ -266,6 +274,9 @@ function renderTransport() {
   $('#btnPlay').innerHTML = engine.playing ? ICON.stop : ICON.play;
   $('#btnPlay').setAttribute('aria-label', engine.playing ? 'Stop' : 'Play');
   $('#btnLoop').classList.toggle('on', !!engine.loop);
+  const pv = engine.playing && !!engine.range;
+  $('#btnPreview').classList.toggle('on', pv);
+  $('#btnPreview').setAttribute('aria-pressed', String(pv));
 }
 
 renderState.onchange = () => {
@@ -309,13 +320,16 @@ async function allChanged() {
   renderHeader();
   const was = engine.playing;
   const pos = engine.position();
-  if (was) engine.stop();
+  const range = engine.range;
+  if (was) engine.stop({ keep: true });
   engine.updateMix();
   const p0 = app.project;
   const gen = engine.gen;
   await ensureAll(p0, engine.sr, { untilBar: pos + 12 });
-  // play again unless Play or Stop was pressed meanwhile; after an undo it plays the restored song
-  if (was && !engine.playing && engine.gen === gen) engine.play(pos);
+  // play again unless Play or Stop was pressed meanwhile; after an undo it plays the restored song.
+  // A preview carries on to its end; one that doesn't play again puts the playhead back.
+  if (was && !engine.playing && engine.gen === gen) engine.play(pos, { range });
+  else if (range && engine.range === range && !engine.playing) { engine.pos = range.back; engine.range = null; }
   // an undo swapped in another song object meanwhile and has drawn the screens for it
   if (app.project === p0) render();
 }
@@ -329,7 +343,7 @@ function openMenu() {
     h('button', { class: 'mi', onclick: () => newSong(false) }, 'New song', h('small', {}, 'Festival template: sections, drums, FX and build sweep ready; you write the notes')),
     h('button', { class: 'mi', onclick: () => newSong(true) }, 'Load the demo song', h('small', {}, 'A full intro → build → drop → breakdown → build → drop')),
     h('button', { class: 'mi', onclick: openHelp }, 'How to make a track'),
-    app.desk ? h('button', { class: 'mi', onclick: shortcutsSheet }, 'Keyboard shortcuts', h('small', {}, 'Backspace undo, Esc reset, Space play, L loop, F fit, N / D / S / M panels, C coach · press ? any time')) : null,
+    app.desk ? h('button', { class: 'mi', onclick: shortcutsSheet }, 'Keyboard shortcuts', h('small', {}, 'Backspace undo, Esc reset, P preview, Space play, L loop, Ctrl+D repeat bars, F fit, N / D / S / M panels, C coach · press ? any time')) : null,
     innerWidth >= 900 ? h('button', { class: 'mi', onclick: () => displaySheet(app) }, 'Display size', h('small', {}, `${Math.round(zoomLevel() * 100)}% · bigger text and controls for a big screen seen from a distance`)) : null,
     h('button', { class: 'mi', onclick: openInstall }, onComputer() ? 'Install on this computer' : 'Install on iPhone'),
     h('div', { class: 'about' }, logoTile(), h('div', {}, h('b', {}, 'E-Drop'), h('br'), `by E-Estimating LLC · version ${APP_VERSION}. Songs stay on this device.`)));
@@ -522,6 +536,8 @@ function wire() {
   $('#btnPlay').addEventListener('click', togglePlay);
   $('#btnHome').addEventListener('click', toSectionStart);
   $('#btnLoop').addEventListener('click', () => app.setLoop(!engine.loop));
+  $('#btnPreview').addEventListener('click', () => { if (app.previewer) app.previewer.play(); renderTransport(); });
+  $('#btnPreview').addEventListener('contextmenu', (e) => { e.preventDefault(); if (app.previewer) app.previewer.sheet(); });
   $('#menuBtn').addEventListener('click', openMenu);
   $('#bpmBtn').addEventListener('click', tempoSheet);
   $('#keyBtn').addEventListener('click', keySheet);
@@ -544,6 +560,7 @@ function wire() {
     if (inText || e.defaultPrevented || !app.project) return;
     // undo keys work on a focused list box too (it was just used to pick a pattern)
     if (undoKey(e)) { e.preventDefault(); return; }
+    if (!typing && barKey(e)) { e.preventDefault(); return; }
     if (typing || e.ctrlKey || e.metaKey) return;
     // a held Space would start and stop at the key-repeat rate
     if (e.code === 'Space' || e.key === ' ') { e.preventDefault(); if (!e.repeat) togglePlay(); return; }
@@ -554,6 +571,7 @@ function wire() {
   for (const b of $$('#tabs button')) b.querySelector('i').innerHTML = ICON[b.dataset.tab];
   $('#btnHome').innerHTML = ICON.home;
   $('#btnLoop').innerHTML = ICON.loop;
+  $('#btnPreview').innerHTML = ICON.preview;
   $('#menuBtn').innerHTML = ICON.more;
   $('#coachBtn').innerHTML = ICON.coach;
   $('#stepSlot').append(stepLevelControl({ compact: true }));
@@ -584,6 +602,29 @@ function undoKey(e) {
   if (e.repeat && performance.now() - undoKeyAt < 140) return true;
   undoKeyAt = performance.now();
   app.history[act]();
+  return true;
+}
+
+// Bars in the editor on screen: Ctrl+D repeats the selected bars, Ctrl+C copies them, Ctrl+V pastes
+// at the selected bar, Delete clears them (js/ui/screens.js barOps). Off with a sheet open, and
+// when no editor shows (the phone on Song, Sound or Mix), so Ctrl+D etc. do what the browser does.
+function barKey(e) {
+  if (e.altKey || sheetOpen() || !app.project) return false;
+  const mod = e.ctrlKey || e.metaKey;
+  const k = e.key.length === 1 ? e.key.toLowerCase() : e.key;
+  let act = null;
+  if (mod && !e.shiftKey) act = { d: 'repeat', c: 'copy', v: 'paste' }[k] || null;
+  else if (!mod && k === 'Delete') act = 'clear';
+  if (!act) return false;
+  const ed = editorPart(app);
+  if (!ed) return false;
+  // Ctrl+C and Delete with no bars selected: nothing of ours to copy or clear
+  if ((act === 'copy' || act === 'clear') && !selOf(app, ed.t, ed.pat)) return false;
+  // text selected on the page (the coach's lessons): Ctrl+C copies that, as it always does
+  if (act === 'copy' && String(window.getSelection ? getSelection() : '').trim()) return false;
+  // mid-gesture (a note held in the piano roll) the pattern stays put, like the undo keys
+  if (e.repeat || (app.history && app.history.busy)) return true;
+  barOps(app, ed.t, ed.pat)[act]();
   return true;
 }
 
@@ -651,6 +692,8 @@ function frame() {
       }
     }
     if (engine.playing !== frame.was) { frame.was = engine.playing; renderTransport(); app.emit(engine.playing ? 'play' : 'stop'); }
+    else if (!!engine.range !== frame.range) renderTransport(); // a preview became plain playback (a seek)
+    frame.range = !!engine.range;
   }
   requestAnimationFrame(frame);
 }
@@ -663,6 +706,7 @@ async function boot() {
   initDesk(app, { icons: ICON });
   app.on('render', () => { lastStep = -2; }); // the drum grid was rebuilt: re-mark the playing step
   initUndo(app, { swap: swapProject });
+  initPreview(app, { unlock });
   initCoach(app);
   store.askPersistent();
   let ok = false;

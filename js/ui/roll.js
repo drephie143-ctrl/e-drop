@@ -6,6 +6,7 @@
 // display-size zoom (CSS zoom on the root), so it stays sharp and the clicks land right.
 import { h } from './dom.js';
 import { inScale, noteName, spell } from '../music/theory.js';
+import { barSelOf } from '../music/bars.js';
 
 const LOW = 24;   // C1
 const HIGH = 96;  // C7
@@ -38,7 +39,12 @@ export class PianoRoll {
     c.addEventListener('pointerdown', (e) => this.down(e));
     c.addEventListener('pointermove', (e) => this.move(e));
     c.addEventListener('pointerup', (e) => this.up(e));
-    c.addEventListener('pointercancel', () => { this.drag = null; this.draw(); });
+    c.addEventListener('pointercancel', () => {
+      const bars = this.drag && this.drag.mode === 'bars';
+      this.drag = null;
+      this.draw();
+      if (bars) this.app.barsChanged(true);
+    });
     c.addEventListener('wheel', (e) => this.wheel(e), { passive: false });
     this.ro = new ResizeObserver(() => this.resize());
     this.ro.observe(this.el);
@@ -179,7 +185,17 @@ export class PianoRoll {
     try { this.canvas.setPointerCapture(e.pointerId); } catch { /* fine */ }
     const p = this.at(e);
     if (p.x < this.kw && p.y > this.ru) { this.app.preview(this.track, p.pitch); return; }
-    if (p.y < this.ru) return;
+    if (p.y < this.ru) {
+      // the ruler: press a bar number to select that bar, drag for several, Shift extends, and a
+      // tap on the only selected bar lets it go (js/ui/screens.js has the same on the bar strip)
+      if (p.x < this.kw) return;
+      const b = this.barAt(p);
+      const s = barSelOf(this.app.ui.bars, this.track, this.pat);
+      const anchor = e.shiftKey && s ? this.app.ui.bars.anchor ?? s.from : b;
+      this.drag = { mode: 'bars', anchor, last: b, moved: false, was: !e.shiftKey && !!s && s.from === b && s.to === b + 1 };
+      this.selBars(anchor, b);
+      return;
+    }
     const hit = this.hit(p);
     this.drag = { p0: p, x0: e.clientX, y0: e.clientY, sx: this.sx, sy: this.sy, hit, moved: false,
       orig: hit ? { ...hit.n } : null, mode: hit ? (hit.edge ? 'resize' : 'move') : 'pan' };
@@ -192,8 +208,13 @@ export class PianoRoll {
       if (this.app.desk && this.pat && e.pointerType === 'mouse') {
         const p = this.at(e);
         const hit = p.x > this.kw && p.y > this.ru ? this.hit(p) : null;
-        this.canvas.style.cursor = p.x < this.kw ? 'pointer' : hit ? (hit.edge ? 'ew-resize' : 'grab') : 'crosshair';
+        this.canvas.style.cursor = p.x < this.kw || p.y < this.ru ? 'pointer' : hit ? (hit.edge ? 'ew-resize' : 'grab') : 'crosshair';
       }
+      return;
+    }
+    if (d.mode === 'bars') {
+      const b = this.barAt(this.at(e));
+      if (b !== d.last) { d.last = b; d.moved = true; this.selBars(d.anchor, b); }
       return;
     }
     const dx = (e.clientX - d.x0) / this.z;
@@ -224,9 +245,15 @@ export class PianoRoll {
     const d = this.drag;
     this.drag = null;
     if (!d) return;
+    if (d.mode === 'bars') {
+      if (d.was && !d.moved) this.app.ui.bars = null;
+      this.app.barsChanged(true);
+      return;
+    }
     const ns = this.pat.notes;
     if (!d.moved) {
-      if (d.hit) ns.splice(ns.indexOf(d.hit.n), 1);
+      // the note held may be gone already (a key changed the bars meanwhile): never splice(-1)
+      if (d.hit) { const i = ns.indexOf(d.hit.n); if (i >= 0) ns.splice(i, 1); }
       else {
         const g = this.grid;
         const start = Math.floor(d.p0.step / g) * g;
@@ -242,6 +269,13 @@ export class PianoRoll {
       this.app.notesEdited(this.track, this.pat);
     }
     this.draw();
+  }
+
+  barAt(p) { return Math.max(0, Math.min((this.pat?.bars || 1) - 1, Math.floor(p.step / 16))); }
+  selBars(anchor, b) {
+    this.app.selectBars(this.track, this.pat, Math.min(anchor, b), Math.max(anchor, b) + 1, anchor);
+    this.draw();
+    this.app.barsChanged(false);
   }
 
   // theme colours, read once (getComputedStyle every frame is slow)
@@ -282,6 +316,15 @@ export class PianoRoll {
       if (x < KW || x > w) continue;
       g.fillStyle = s % 16 === 0 ? col('--roll-bar') : s % 4 === 0 ? col('--roll-beat') : col('--roll-line');
       if (s % 4 === 0 || this.zx >= 9) g.fillRect(x, RU, s % 16 === 0 ? 1.5 : 1, H);
+    }
+    // the selected bars (the bar strip and the ruler pick them)
+    const sel = barSelOf(this.app.ui.bars, this.track, this.pat);
+    const selX = sel ? [Math.max(KW, this.xOf(sel.from * 16)), Math.min(w, this.xOf(sel.to * 16))] : null;
+    if (selX && selX[1] > selX[0]) {
+      g.fillStyle = 'rgba(240, 102, 23, .08)';
+      g.fillRect(selX[0], RU, selX[1] - selX[0], H - RU);
+      g.fillStyle = 'rgba(240, 102, 23, .6)';
+      for (const x of [this.xOf(sel.from * 16), this.xOf(sel.to * 16)]) if (x >= KW && x <= w) g.fillRect(x - 1, RU, 2, H - RU);
     }
     const endX = this.xOf(steps);
     if (endX < w) { g.fillStyle = 'rgba(0,0,0,.45)'; g.fillRect(endX, RU, w - endX, H); }
@@ -338,11 +381,13 @@ export class PianoRoll {
     // ruler
     g.fillStyle = col('--panel');
     g.fillRect(0, 0, w, RU);
+    if (selX && selX[1] > selX[0]) { g.fillStyle = 'rgba(240, 102, 23, .38)'; g.fillRect(selX[0], 0, selX[1] - selX[0], RU); }
     g.fillStyle = col('--muted');
     g.font = `600 ${desk ? 11 : 10}px ${FONT}`;
     const beats = desk && this.zx * 4 >= 34;
     for (let b = 0; b < this.pat.bars; b++) {
       const x = this.xOf(b * 16);
+      g.fillStyle = sel && b >= sel.from && b < sel.to ? '#fff' : col('--muted');
       if (x >= KW - 2 && x < w) g.fillText(String(b + 1), x + 3, RU / 2 + 1);
       for (let q = 1; q < 4 && this.zx > 6; q++) {
         const xq = this.xOf(b * 16 + q * 4);

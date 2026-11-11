@@ -282,6 +282,9 @@ export class Engine {
     this.playing = false;
     this.pos = 0; // bars
     this.loop = null; // { from, to } in bars, or null for the whole song
+    // a preview (js/preview.js): play to `to` once, then stop and put the playhead back at `back`.
+    // It wins over the loop while it plays, and leaves the loop as it was.
+    this.range = null; // { to, back } in bars
     this.sources = new Set();
     this.gen = 0; // bumped by every play and stop: a play still waiting on renders checks it
     this.onEnded = null;
@@ -292,6 +295,9 @@ export class Engine {
 
   setProject(p) {
     this.stop();
+    // a play waiting on renders, or a preview held for them, belongs to the song being replaced
+    this.range = null;
+    this.gen++;
     this.project = p;
     this.pos = 0;
     this.rebuild();
@@ -300,14 +306,15 @@ export class Engine {
   // Rebuild the mixer (tracks added or removed, reverb size changed).
   rebuild() {
     const wasPlaying = this.playing;
-    if (wasPlaying) this.stop();
+    const range = this.range;
+    if (wasPlaying) this.stop({ keep: true }); // a preview carries on to its end
     if (this.m) { try { this.m.out.disconnect(); } catch { /* gone */ } }
     const M = this.project.master;
     const irKey = `${M.revSize}|${M.revDamp}`;
     if (this.irKey !== irKey) { this.ir = makeIR(this.ctx, { seconds: M.revSize, damp: M.revDamp }); this.irKey = irKey; }
     this.m = buildMix(this.ctx, this.project, { ir: this.ir, live: true });
     resetLanes(this.ctx, this.m, this.project);
-    if (wasPlaying) this.play(this.pos);
+    if (wasPlaying) this.play(this.pos, { range });
   }
 
   updateMix() { if (this.m) applyMix(this.ctx, this.m, this.project); }
@@ -315,12 +322,26 @@ export class Engine {
   songBars() { return songBars(this.project); }
 
   // --- transport (positions in bars) ---------------------------------------------
-  async play(fromBar = this.pos) {
+  // With opts.range ({ to, back }) it plays [fromBar, to) once: the preview. Any other play,
+  // a seek or a stop ends a preview; stop() puts the playhead back at `back`.
+  async play(fromBar = this.pos, opts = {}) {
     if (this.playing) this.stop();
     const p = this.project;
     const total = songBars(p);
-    if (!this.loop && fromBar >= total - 0.01) fromBar = 0;
-    if (this.loop && (fromBar < this.loop.from || fromBar >= this.loop.to)) fromBar = this.loop.from;
+    // a preview asked to go on from its own end (an undo in its last moments): it is over
+    if (opts.range && Math.min(total, opts.range.to) <= fromBar + 1e-6) {
+      this.pos = opts.range.back;
+      this.range = null;
+      if (this.onEnded) this.onEnded();
+      return;
+    }
+    const range = opts.range ? { to: Math.min(total, opts.range.to), back: opts.range.back } : null;
+    this.range = range;
+    if (!range && !this.loop && fromBar >= total - 0.01) fromBar = 0;
+    if (!range && this.loop && (fromBar < this.loop.from || fromBar >= this.loop.to)) fromBar = this.loop.from;
+    // the playhead is where playback will start, also while the parts it needs still render (an
+    // undo or a stop in that wait goes on from, or remembers, this bar)
+    this.pos = fromBar;
     this.playing = true;
     const gen = ++this.gen;
     await ensureAll(p, this.sr, { untilBar: fromBar + 12 });
@@ -331,7 +352,7 @@ export class Engine {
     this.segs = [];
     this.late = [];
     this.timer = setInterval(() => this.tick(), 25);
-    this.addSeg(fromBar, this.loop ? this.loop.to : total, ctx.currentTime + 0.06, true);
+    this.addSeg(fromBar, range ? range.to : this.loop ? this.loop.to : total, ctx.currentTime + 0.06, true);
     this.tick();
   }
 
@@ -370,12 +391,13 @@ export class Engine {
       if (ready) { startClip(ctx, this.m, this.project, L.c, Math.max(now, L.when), off, this.sources); this.late.splice(i, 1); }
     }
     const last = this.segs[this.segs.length - 1];
-    if (this.loop) {
+    if (this.loop && !this.range) {
       if (last.end < ctx.currentTime + 1) this.addSeg(this.loop.from, this.loop.to, last.end);
       this.segs = this.segs.filter((s) => s.end > ctx.currentTime - 1 || s === last);
     } else if (ctx.currentTime > last.end + 0.05) {
-      this.stop();
-      this.pos = 0;
+      const preview = !!this.range;
+      this.stop(); // a preview's stop puts the playhead back where it was
+      if (!preview) this.pos = 0;
       if (this.onEnded) this.onEnded();
     }
   }
@@ -389,9 +411,12 @@ export class Engine {
     return Math.min(seg.to, seg.from + Math.max(0, now - seg.when) / bs);
   }
 
-  stop() {
+  // opts.keep: a stop to start again at once (a rebuild, an undo while playing). It keeps the
+  // preview, and the playhead where it is; the caller plays on with { range: this.range }.
+  stop(opts = {}) {
     if (!this.playing) return;
     this.pos = Math.max(0, this.position());
+    if (this.range && !opts.keep) { this.pos = this.range.back; this.range = null; }
     this.playing = false;
     this.gen++;
     clearInterval(this.timer);
@@ -425,7 +450,9 @@ export class Engine {
     const bs = barSec(p);
     const total = songBars(p);
     for (const [i, seg] of this.segs.entries()) {
-      if (!this.loop) { seg.to = total; seg.end = seg.when + (seg.to - seg.from) * bs; }
+      // a preview keeps its end (inside the song as it is now); the whole song runs to its new end
+      if (this.range) { seg.to = Math.max(seg.from, Math.min(this.range.to, total)); seg.end = seg.when + (seg.to - seg.from) * bs; }
+      else if (!this.loop) { seg.to = total; seg.end = seg.when + (seg.to - seg.from) * bs; }
       const first = i === 0;
       seg.list = this.clips.filter((c) => (c.bar >= seg.from && c.bar < seg.to) || (first && c.bar < seg.from && c.bar + c.bars > seg.from));
       seg.idx = 0;

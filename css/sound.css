@@ -59,7 +59,15 @@ body.ultra #tab-sound, body.ultra #tab-drums, body.ultra #tab-notes { --sg-h: cl
 .dbar { flex: 1 1 0; min-width: 0; display: grid; grid-template-columns: repeat(16, minmax(0, 1fr)); gap: 2px; }
 .druler { margin-bottom: -2px; }
 .druler .dname { padding: 0; }
-.dbar-lbl { flex: 1 1 0; min-width: 0; font-size: 11px; font-weight: 700; color: var(--muted); padding: 0 2px; border-left: 2px solid var(--line); line-height: 16px; }
+.dbar-lbl { flex: 1 1 0; min-width: 0; font-size: 11px; font-weight: 700; color: var(--muted); padding: 2px 4px; border-left: 2px solid var(--line); line-height: 16px; text-align: left; border-radius: 0 6px 6px 0; touch-action: none; }
+.dbar-lbl.on { color: var(--accent); border-left-color: var(--accent); background: var(--accent-soft); }
+.dbar-lbl.void { border-left-color: transparent; }
+.step.void { background: transparent; border-style: dashed; opacity: .35; }
+/* the drum grid's pages: ‹ Bar 3 of 8 › */
+.dpager { display: flex; align-items: center; gap: 8px; margin: 0 0 8px; }
+.dpager b { font-size: 13px; color: var(--muted); font-variant-numeric: tabular-nums; min-width: 110px; text-align: center; }
+.dpager button { width: 36px; height: 30px; border-radius: 8px; background: var(--panel2); border: 1px solid var(--line); font-size: 18px; font-weight: 700; line-height: 1; color: var(--text); }
+@media (hover: hover) { .dbar-lbl:hover { color: var(--text); } }
 .dgrid.wide .step.cur { box-shadow: 0 0 0 2px #fff inset; }
 
 body.desk #tab-drums .dname { width: 72px; font-size: 12px; }

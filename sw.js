@@ -1,13 +1,13 @@
 // Offline cache for the app shell. Network first, so a new version shows up as soon as
 // the phone is online; the cache is the fallback when it's offline.
 // Bump VERSION when files change.
-const VERSION = 'e-drop-v3';
+const VERSION = 'e-drop-v4';
 const SHELL = [
   './', 'index.html', 'manifest.webmanifest',
   'css/app.css', 'css/sound.css', 'css/mix.css', 'css/coach.css', 'css/desktop.css',
-  'js/main.js', 'js/store.js', 'js/undo.js',
+  'js/main.js', 'js/store.js', 'js/undo.js', 'js/preview.js',
   'js/audio/engine.js', 'js/audio/render.js', 'js/audio/synth.js', 'js/audio/presets.js', 'js/audio/drums.js', 'js/audio/fx.js',
-  'js/music/theory.js', 'js/music/project.js', 'js/music/demo.js',
+  'js/music/theory.js', 'js/music/project.js', 'js/music/demo.js', 'js/music/bars.js',
   'js/ui/dom.js', 'js/ui/roll.js', 'js/ui/song.js', 'js/ui/screens.js', 'js/ui/sound.js', 'js/ui/mix.js', 'js/ui/desktop.js',
   'js/ui/graph-base.js', 'js/ui/graphs-sound.js', 'js/ui/graphs-mix.js',
   'js/coach/coach.js', 'js/coach/lessons.js', 'js/coach/doctor.js', 'js/coach/facts.js', 'js/coach/glossary.js', 'js/coach/spotlight.js',

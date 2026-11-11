@@ -308,6 +308,7 @@ const SHORTCUTS = [
   [['Shift', '+', 'Backspace'], 'Redo (Ctrl+Y too; Ctrl+Z also undoes)'],
   [['Esc'], 'Reset the song to the original (Backspace brings your changes back)'],
   [['Space'], 'Play / stop'],
+  [['P'], 'Preview: hear your edits (or the selected bars) in the song, a few seconds either side; again to stop'],
   [['L'], 'Loop the selected section on / off'],
   [['Home'], 'Back to the start of the section'],
   [['←', '/', '→'], 'Playhead one bar back / forward'],
@@ -317,6 +318,10 @@ const SHORTCUTS = [
   [['S', '/', 'M'], 'Show Sound / Mix'],
   [['C'], 'Open or close the coach'],
   [['1', '/', '2', '/', '3'], 'Arrow step size: small, medium, large'],
+  [['Ctrl', '+', 'D'], 'Notes, Drums, FX: repeat the selected bars right after them'],
+  [['Ctrl', '+', 'C', '/', 'V'], 'Copy the selected bars / paste them at the selected bar'],
+  [['Delete'], 'Clear the selected bars (on a Mac: fn + delete; delete alone is Backspace, undo)'],
+  [['Shift', '+', 'click a bar'], 'Select several bars (or drag across the bar numbers)'],
   [['Shift', '+', 'click ◀ ▶'], 'One large step (Alt-click: one small step)'],
   [['Ctrl', '+', 'wheel'], 'Zoom the piano roll or the song timeline'],
   [['Shift', '+', 'wheel'], 'Scroll sideways'],
@@ -339,7 +344,7 @@ export function deskKey(e, app, { home }) {
   if (k === '?') { shortcutsSheet(); return true; }
   if (sheetOpen() || e.altKey) return false;
   // a held key repeats: the arrows may walk the playhead, the panel / loop / coach keys act once
-  if (e.repeat && /^[lfndsmc]$/i.test(k)) return true;
+  if (e.repeat && /^[lfndsmcp]$/i.test(k)) return true;
   const eng = app.engine;
   const p = app.project;
   const seekTo = (bar) => { eng.seek(Math.max(0, Math.min(songBars(p), bar))); };
@@ -367,6 +372,7 @@ export function deskKey(e, app, { home }) {
     case 's': case 'S': app.goTab('sound'); return true;
     case 'm': case 'M': app.goTab('mix'); return true;
     case 'c': case 'C': { const b = $('#coachBtn'); if (b) b.click(); return true; }
+    case 'p': case 'P': if (app.previewer) app.previewer.play(); return true;
     default: return false;
   }
 }

@@ -46,6 +46,36 @@ Every slider has ◀ ▶ arrows. They move by the step size: **1 Small**, **2 Me
 (the STEP pill in the transport, the switch in the desktop top bar, or the 1 / 2 / 3 keys).
 Shift-click an arrow for one large step, Alt-click for a small one; hold it to repeat.
 
+## Bars and preview
+
+Above the piano roll, the drum grid and the FX editor is a strip with a button per bar of the
+pattern (`js/ui/screens.js`, the bar operations in `js/music/bars.js`). Tap a bar number to select
+it, drag across the numbers (or the piano roll's ruler, or the drum grid's bar labels) for several,
+Shift-click to extend, tap the only selected bar again to let it go; **All** selects every bar. On
+the drum grid a number also brings its bar into view; the ‹ › arrows above the grid move through a
+long beat without selecting anything. Then:
+
+- **Repeat** copies the selected bars right after them; press it again for another copy (bar 1 →
+  2 → 3 → 4). Past the end it makes the pattern longer, up to 64 bars, and says so.
+- **Fill** repeats them over every bar after them to the end of the pattern.
+- **Copy** and **Paste**: paste goes in at the selected bar, into any pattern of the same kind
+  (notes into any synth track, hits into drums, effects into FX), in this song or another one.
+- **Clear** empties them.
+
+What the selected bars hold is what starts in them; a note that rings past the end is cut there, so
+a copied bar sounds like that bar. Writing into bars replaces them, and a note ringing in from an
+earlier bar is cut where they start. Each action is one undo step.
+
+**Preview** (P, the bracketed play button in the transport, or ▶ Preview in the strip) plays your
+work in the song, from a few seconds before it to a few seconds after, then puts the playhead back
+where it was; press it again (or Space) to stop. It plays, newest first: the bars you selected, or
+else where your edits since the last preview are (`js/preview.js` compares the song before and
+after each change: the notes, hits and effects, the sections, the automation points), or else the
+selected section. A pattern used in several sections is heard where the selected section plays it.
+Only a selection in the editor on screen counts. The Song timeline's ruler shows the stretch in
+orange. Set the seconds before and after with the
+**2 s · 2 s** chip (or right-click the transport button): 1, 2, 3, 4 or 8 s, rounded out to the beat.
+
 ## The coach
 
 The graduation cap opens the coach (`js/coach/`): a panel above the tab bar on the phone (collapse it
@@ -121,6 +151,7 @@ the window is at least 1200 px wide it switches to the desktop layout (`js/ui/de
 | Shift + Backspace | Redo (Ctrl+Y and Ctrl+Shift+Z too; Ctrl+Z also undoes) |
 | Esc | Reset the song to the original: the demo as it ships, a new song as the template, a copy as it was copied. Backspace brings your changes back |
 | Space | Play / stop |
+| P | Preview your edits (or the selected bars) in the song, a few seconds either side; again to stop |
 | L | Loop the selected section on / off |
 | Home | Back to the start of the section |
 | ← → | Playhead one bar back / forward (Shift: previous / next section) |
@@ -129,10 +160,13 @@ the window is at least 1200 px wide it switches to the desktop layout (`js/ui/de
 | S / M | Show Sound / Mix |
 | C | Open or close the coach |
 | 1 / 2 / 3 | Arrow step size: small, medium, large (Shift-click an arrow for one large step, Alt-click for a small one) |
+| Ctrl + D | Repeat the selected bars right after them |
+| Ctrl + C / Ctrl + V | Copy the selected bars / paste them at the selected bar |
+| Delete | Clear the selected bars (on a Mac fn + delete: the delete key alone is Backspace, undo) |
 | Esc | With a sheet, a coach definition or a Show me ring up: closes it (press again to reset) |
 | ? | The list of shortcuts |
 
-Shortcuts are off while you type in a box, and all but undo and redo while you hold Ctrl. Arrow keys
+Shortcuts are off while you type in a box, and all but undo, redo and the bar keys while you hold Ctrl. Arrow keys
 on a focused slider move it.
 
 **Undo** (`js/undo.js`) counts one gesture as one change: a tap, a drag, a hold on a ◀ ▶ arrow, a
